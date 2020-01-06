@@ -643,20 +643,36 @@ class Partition(val topic: String,
     }
   }
 
+  /**
+    * 熟悉的三个参数
+    * @param records
+    * @param isFromClient
+    * @param requiredAcks
+    * @return
+    */
   def appendRecordsToLeader(records: MemoryRecords, isFromClient: Boolean, requiredAcks: Int = 0): LogAppendInfo = {
+    // inReadLock是一个柯里化函数，第二个参数是一个函数，返回值是LogAppendInfo和HW是否增加的bool值
+    // 相当于给方法加了读锁
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
+      // leaderReplicaIfLocal表示本地broker中的leader副本
       leaderReplicaIfLocal match {
+        //如果存在的话
         case Some(leaderReplica) =>
+          // 获取Replica中的Log对象
           val log = leaderReplica.log.get
+          // min.insync.replicas参数
           val minIsr = log.config.minInSyncReplicas
+          // Set[Replica] ISR大小
           val inSyncSize = inSyncReplicas.size
 
           // Avoid writing to leader if there are not enough insync replicas to make it safe
+          // 如果isr的个数没有满足min.insync.replicas就报错，需要知道的是min.insync.replicas是和ack=-1一起使用的
           if (inSyncSize < minIsr && requiredAcks == -1) {
             throw new NotEnoughReplicasException("Number of insync replicas for partition %s is [%d], below required minimum [%d]"
               .format(topicPartition, inSyncSize, minIsr))
           }
 
+          // 真正的消息追加交给Log对象
           val info = log.appendAsLeader(records, leaderEpoch = this.leaderEpoch, isFromClient)
           // probably unblock some follower fetch requests since log end offset has been updated
           replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))

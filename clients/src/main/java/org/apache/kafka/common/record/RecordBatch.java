@@ -108,7 +108,9 @@ public interface RecordBatch extends Iterable<Record> {
      * caution. Generally {@link #lastOffset()} is safer since access is efficient for all magic versions.
      *
      * @return The base offset of this record batch (which may or may not be the offset of the first record
-     *         as described above).
+     *         as described above)
+     * 获取消息批中的基准位移，在V2消息体之前，基准位移总是返回消息批中第一条消息的位移，这通常需要深度遍历来返回第一条消息的位移
+     * V2版本以上，将返回第一条原始消息的位移(例如压缩之前)
      */
     long baseOffset();
 

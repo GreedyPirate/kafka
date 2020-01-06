@@ -401,19 +401,26 @@ class KafkaApis(val requestChannel: RequestChannel,
     val authorizedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
 
     for ((topicPartition, memoryRecords) <- produceRequest.partitionRecordsOrFail.asScala) {
+      // 是否认证通过，是否有write权限
       if (!authorize(request.session, Write, Resource(Topic, topicPartition.topic, LITERAL)))
+        // 忘了语法... +=是想集合添加元素，但是 ->呢？ 这是map的key->value 语法
         unauthorizedTopicResponses += topicPartition -> new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
       else if (!metadataCache.contains(topicPartition))
+        // 元数据缓存中是否有该tp，元数据缓存是由controller直接更新的
         nonExistingTopicResponses += topicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION)
       else
+        // 剩下的都是可用的消息
         authorizedRequestInfo += (topicPartition -> memoryRecords)
     }
 
     // the callback for sending a produce response
+    // 嵌套方法，定义响应回调，可以先不看
     def sendResponseCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
+      // ++表示集合合并
       val mergedResponseStatus = responseStatus ++ unauthorizedTopicResponses ++ nonExistingTopicResponses
       var errorInResponse = false
 
+      // 先打个日志，不管
       mergedResponseStatus.foreach { case (topicPartition, status) =>
         if (status.error != Errors.NONE) {
           errorInResponse = true
@@ -443,6 +450,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
 
       // Send the response immediately. In case of throttling, the channel has already been muted.
+      // ack=0表示发到broker就返回，不关心副本是否写入
       if (produceRequest.acks == 0) {
         // no operation needed if producer request.required.acks = 0; however, if there is any error in handling
         // the request, since no response is expected by the producer, the server will close socket server so that
@@ -463,6 +471,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           sendNoOpResponseExemptThrottle(request)
         }
       } else {
+        // ack为-1或1的响应
         sendResponse(request, Some(new ProduceResponse(mergedResponseStatus.asJava, maxThrottleTimeMs)), None)
       }
     }
@@ -476,16 +485,25 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (authorizedRequestInfo.isEmpty)
       sendResponseCallback(Map.empty)
     else {
+      // 只有__admin_client客户端才能写入内部topic，例如__consumer_offset
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
+      // 开始调用副本管理器追加消息
       replicaManager.appendRecords(
+        // 超时时间
         timeout = produceRequest.timeout.toLong,
+        // ack参数
         requiredAcks = produceRequest.acks,
+        // 是否允许添加内部topic消息
         internalTopicsAllowed = internalTopicsAllowed,
+        // 是否来自client，也有可能来自别的broker
         isFromClient = true,
+        // 消息体
         entriesPerPartition = authorizedRequestInfo,
+        // 响应函数
         responseCallback = sendResponseCallback,
+        // 状态转换函数
         recordConversionStatsCallback = processingStatsCallback)
 
       // if the request is put into the purgatory, it will have a held reference and hence cannot be garbage collected;

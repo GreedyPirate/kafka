@@ -765,9 +765,11 @@ class Log(@volatile var dir: File,
         if (assignOffsets) {
           // assign offsets to the message set
           val offset = new LongRef(nextOffsetMetadata.messageOffset)
+          // firstOffset又重新赋值了
           appendInfo.firstOffset = Some(offset.value)
           val now = time.milliseconds
           val validateAndOffsetAssignResult = try {
+            // TODO 各种验证
             LogValidator.validateMessagesAndAssignOffsets(validRecords,
               offset,
               time,
@@ -784,7 +786,9 @@ class Log(@volatile var dir: File,
             case e: IOException =>
               throw new KafkaException(s"Error validating messages while appending to log $name", e)
           }
+          // 验证通过后的消息
           validRecords = validateAndOffsetAssignResult.validatedRecords
+          // 最终补全appendInfo对象
           appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
           appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
           appendInfo.lastOffset = offset.value - 1
@@ -796,6 +800,7 @@ class Log(@volatile var dir: File,
           // format conversion)
           if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
             for (batch <- validRecords.batches.asScala) {
+              // batch批不能比max.message.bytes大
               if (batch.sizeInBytes > config.maxMessageSize) {
                 // we record the original message set size instead of the trimmed size
                 // to be consistent with pre-compression bytesRejectedRate recording
@@ -807,6 +812,7 @@ class Log(@volatile var dir: File,
             }
           }
         } else {
+          // assignOffsets=false 先不看了
           // we are taking the offsets we are given
           if (!appendInfo.offsetsMonotonic)
             throw new OffsetsOutOfOrderException(s"Out of order offsets found in append to $topicPartition: " +
@@ -838,6 +844,7 @@ class Log(@volatile var dir: File,
         }
 
         // check messages set size may be exceed config.segmentSize
+        // MemoryRecords总消息不能比segment.bytes大
         if (validRecords.sizeInBytes > config.segmentSize) {
           throw new RecordBatchTooLargeException(s"Message batch size is ${validRecords.sizeInBytes} bytes in append " +
             s"to partition $topicPartition, which exceeds the maximum configured segment size of ${config.segmentSize}.")
@@ -845,6 +852,7 @@ class Log(@volatile var dir: File,
 
         // now that we have valid records, offsets assigned, and timestamps updated, we need to
         // validate the idempotent/transactional state of the producers and collect some metadata
+        // 事务和幂等性校验
         val (updatedProducers, completedTxns, maybeDuplicate) = analyzeAndValidateProducerState(validRecords, isFromClient)
         maybeDuplicate.foreach { duplicate =>
           appendInfo.firstOffset = Some(duplicate.firstOffset)
@@ -855,13 +863,16 @@ class Log(@volatile var dir: File,
         }
 
         // maybe roll the log if this segment is full
+        // 是否需要生成一个新的segment，如果最后一个segment已经满了
         val segment = maybeRoll(validRecords.sizeInBytes, appendInfo)
 
+        // 保存位移的VO
         val logOffsetMetadata = LogOffsetMetadata(
           messageOffset = appendInfo.firstOrLastOffsetOfFirstBatch,
           segmentBaseOffset = segment.baseOffset,
           relativePositionInSegment = segment.size)
 
+        // 追加日志
         segment.append(largestOffset = appendInfo.lastOffset,
           largestTimestamp = appendInfo.maxTimestamp,
           shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
@@ -885,6 +896,7 @@ class Log(@volatile var dir: File,
         producerStateManager.updateMapEndOffset(appendInfo.lastOffset + 1)
 
         // increment the log end offset
+        // 更新LEO，lastOffset + 1
         updateLogEndOffset(appendInfo.lastOffset + 1)
 
         // update the first unstable offset (which is used to compute LSO)
@@ -1446,11 +1458,13 @@ class Log(@volatile var dir: File,
         Note that this is only required for pre-V2 message formats because these do not store the first message offset
         in the header.
       */
+      // V2之后有firstOffset，V2之前的取lastOffset，因为需要解压才能获取firstOffset
       appendInfo.firstOffset match {
         case Some(firstOffset) => roll(firstOffset)
         case None => roll(maxOffsetInMessages - Integer.MAX_VALUE)
       }
     } else {
+      // 不需要Roll，就返回当前正在使用的Segment：activeSegment
       segment
     }
   }
@@ -1467,15 +1481,19 @@ class Log(@volatile var dir: File,
       lock synchronized {
         checkIfMemoryMappedBufferClosed()
         val newOffset = math.max(expectedNextOffset, logEndOffset)
+        // 新建.log, .index, .timeIndex文件，如果用了事务，还会有.txnindex文件
         val logFile = Log.logFile(dir, newOffset)
         val offsetIdxFile = offsetIndexFile(dir, newOffset)
         val timeIdxFile = timeIndexFile(dir, newOffset)
         val txnIdxFile = transactionIndexFile(dir, newOffset)
+        // 检查是否已存在以上文件，存在则先删除
         for (file <- List(logFile, offsetIdxFile, timeIdxFile, txnIdxFile) if file.exists) {
           warn(s"Newly rolled segment file ${file.getAbsolutePath} already exists; deleting it first")
           Files.delete(file.toPath)
         }
 
+        // segments使用一个跳表构建的Map，说明Segment使用跳表组织的
+        // key是Segment的baseOffset，value是Segment对象
         Option(segments.lastEntry).foreach(_.getValue.onBecomeInactiveSegment())
 
         // take a snapshot of the producer state to facilitate recovery. It is useful to have the snapshot
@@ -1486,6 +1504,7 @@ class Log(@volatile var dir: File,
         producerStateManager.updateMapEndOffset(newOffset)
         producerStateManager.takeSnapshot()
 
+        // 创建LogSegment，添加到segments里
         val segment = LogSegment.open(dir,
           baseOffset = newOffset,
           config,
@@ -1494,15 +1513,17 @@ class Log(@volatile var dir: File,
           initFileSize = initFileSize,
           preallocate = config.preallocate)
         val prev = addSegment(segment)
+        // 说明已存在
         if (prev != null)
           throw new KafkaException(s"Trying to roll a new log segment for topic partition $topicPartition with " +
             s"start offset $newOffset while it already exists.")
         // We need to update the segment base offset and append position data of the metadata when log rolls.
         // The next offset should not change.
+        // 更新LEO
         updateLogEndOffset(nextOffsetMetadata.messageOffset)
         // schedule an asynchronous flush of the old segment
+        // 将recoveryPoint到新segment offset，也就是老的segment刷盘，包含4个文件：.log, .index, .timeIndex，.txnindex
         scheduler.schedule("flush-log", () => flush(newOffset), delay = 0L)
-
         info(s"Rolled new log segment at offset $newOffset in ${time.hiResClockMs() - start} ms.")
 
         segment

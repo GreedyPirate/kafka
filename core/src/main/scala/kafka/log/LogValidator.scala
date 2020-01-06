@@ -44,6 +44,11 @@ private[kafka] object LogValidator extends Logging {
    *
    * Returns a ValidationAndOffsetAssignResult containing the validated message set, maximum timestamp, the offset
    * of the shallow message with the max timestamp and a boolean indicating whether the message sizes may have changed.
+    * 更新消息集的位移，并做以下验证
+    * 1. 被压缩的消息必须有key
+    * 2. 当版本>=1，压缩的消息必须有从0开始单调递增的位移
+    * 3. 当版本>= 1，验证且有可能重写消息的时间戳
+    * 4. DefaultRecordBatch中声明的消息数必须和有效消息数的个数匹配
    */
   private[kafka] def validateMessagesAndAssignOffsets(records: MemoryRecords,
                                                       offsetCounter: LongRef,

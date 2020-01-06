@@ -466,8 +466,10 @@ class ReplicaManager(val config: KafkaConfig,
                     responseCallback: Map[TopicPartition, PartitionResponse] => Unit,
                     delayedProduceLock: Option[Lock] = None,
                     recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => ()) {
+    // 简单的校验ack合法性，-1，0，1才合法
     if (isValidRequiredAcks(requiredAcks)) {
       val sTime = time.milliseconds
+      // 写入到本地broker中
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
         isFromClient = isFromClient, entriesPerPartition, requiredAcks)
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
@@ -481,6 +483,7 @@ class ReplicaManager(val config: KafkaConfig,
 
       recordConversionStatsCallback(localProduceResults.mapValues(_.info.recordConversionStats))
 
+      // ack为-1时需要follower同步，需要放入延迟队列中，等待条件满足后返回
       if (delayedProduceRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
         // create delayed produce operation
         val produceMetadata = ProduceMetadata(requiredAcks, produceStatus)
@@ -502,10 +505,12 @@ class ReplicaManager(val config: KafkaConfig,
     } else {
       // If required.acks is outside accepted range, something is wrong with the client
       // Just return an error and don't handle the request at all
+      // ack参数无效后直接返回错误
       val responseStatus = entriesPerPartition.map { case (topicPartition, _) =>
         topicPartition -> new PartitionResponse(Errors.INVALID_REQUIRED_ACKS,
           LogAppendInfo.UnknownLogAppendInfo.firstOffset.getOrElse(-1), RecordBatch.NO_TIMESTAMP, LogAppendInfo.UnknownLogAppendInfo.logStartOffset)
       }
+      // 调用响应方法
       responseCallback(responseStatus)
     }
   }
@@ -723,18 +728,26 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Append the messages to the local replica logs
-   */
+    * Append the messages to the local replica logs
+    * @param internalTopicsAllowed 是否允许操作内部topic
+    * @param isFromClient true，来自客户端
+    * @param entriesPerPartition 消息体
+    * @param requiredAcks ack参数
+    * @return Map[TopicPartition, LogAppendResult]
+    */
   private def appendToLocalLog(internalTopicsAllowed: Boolean,
                                isFromClient: Boolean,
                                entriesPerPartition: Map[TopicPartition, MemoryRecords],
                                requiredAcks: Short): Map[TopicPartition, LogAppendResult] = {
     trace(s"Append [$entriesPerPartition] to local log")
+    // 遍历消息集合，追加消息 map里的case表示是个匿名偏函数
     entriesPerPartition.map { case (topicPartition, records) =>
+      // metrics ...
       brokerTopicStats.topicStats(topicPartition.topic).totalProduceRequestRate.mark()
       brokerTopicStats.allTopicsStats.totalProduceRequestRate.mark()
 
       // reject appending to internal topics if it is not allowed
+      // 如果没有内部topic的操作权限，就报错，内部topic只有两个__consumer_offsets和__transaction_state
       if (Topic.isInternal(topicPartition.topic) && !internalTopicsAllowed) {
         (topicPartition, LogAppendResult(
           LogAppendInfo.UnknownLogAppendInfo,
@@ -753,6 +766,7 @@ class ReplicaManager(val config: KafkaConfig,
 
           trace(s"${records.sizeInBytes} written to log ${topicPartition} beginning at offset " +
             s"${info.firstOffset.getOrElse(-1)} and ending at offset ${info.lastOffset}")
+          // 向一个tp中追加消息结束，返回结果
           (topicPartition, LogAppendResult(info))
         } catch {
           // NOTE: Failed produce requests metric is not incremented for known exceptions

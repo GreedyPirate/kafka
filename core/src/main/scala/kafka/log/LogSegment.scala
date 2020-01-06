@@ -63,6 +63,18 @@ class LogSegment private[log] (val log: FileRecords,
 
   def shouldRoll(messagesSize: Int, maxTimestampInMessages: Long, maxOffsetInMessages: Long, now: Long): Boolean = {
     val reachedRollMs = timeWaitedForRoll(now, maxTimestampInMessages) > maxSegmentMs - rollJitterMs
+
+    /**
+      * 满足一下条件需要Roll，
+      * 1.当前Segment.size > 最大Segment大小 - 消息大小
+      *  最大Segment大小由segment.bytes控制，默认1M，减去要追加的消息是0.2M 当前Segment为0.9M, 也就是1M-0.9M < 0.2M，需要Roll了
+      *  maxSegmentBytes - size < messagesSize 可能更好理解点
+      * 2. size > 0，但是已经到了segment.ms的最大Roll时间
+      * 3. 索引文件已满
+      * 4. timeIndex文件已满，这两个文件log.dir/topic
+      * 5. 消息的lastOffset不能小于segment的baseOffset
+      *
+      */
     size > maxSegmentBytes - messagesSize ||
       (size > 0 && reachedRollMs) ||
       offsetIndex.isFull || timeIndex.isFull || !canConvertToRelativeOffset(maxOffsetInMessages)
