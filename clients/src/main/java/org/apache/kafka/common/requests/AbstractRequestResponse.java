@@ -25,7 +25,9 @@ public abstract class AbstractRequestResponse {
      * Visible for testing.
      */
     public static ByteBuffer serialize(Struct headerStruct, Struct bodyStruct) {
+        // 分配内存
         ByteBuffer buffer = ByteBuffer.allocate(headerStruct.sizeOf() + bodyStruct.sizeOf());
+        // 写入消息头和消息体
         headerStruct.writeTo(buffer);
         bodyStruct.writeTo(buffer);
         buffer.rewind();

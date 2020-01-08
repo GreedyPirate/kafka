@@ -54,3 +54,4 @@ systest/
 *.swp
 
 data/
+logs

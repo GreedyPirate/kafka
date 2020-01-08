@@ -381,6 +381,7 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Handle a produce request
    */
   def handleProduceRequest(request: RequestChannel.Request) {
+    // 转换为具体的请求对象
     val produceRequest = request.body[ProduceRequest]
     val numBytesAppended = request.header.toStruct.sizeOf + request.sizeOfBodyInBytes
 
@@ -491,7 +492,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       // call the replica manager to append messages to the replicas
       // 开始调用副本管理器追加消息
       replicaManager.appendRecords(
-        // 超时时间
+        // 超时时间, 客户端Sender中的requestTimeoutMs，表示客户端请求超时
         timeout = produceRequest.timeout.toLong,
         // ack参数
         requiredAcks = produceRequest.acks,
@@ -508,17 +509,20 @@ class KafkaApis(val requestChannel: RequestChannel,
 
       // if the request is put into the purgatory, it will have a held reference and hence cannot be garbage collected;
       // hence we clear its data here in order to let GC reclaim its memory since it is already appended to log
+      // 如果需要被放入purgatory，清空引用让GC回收, 因为已经append到log了
       produceRequest.clearPartitionRecords()
     }
   }
 
   /**
+   * 既有client，也有follower
    * Handle a fetch request
    */
   def handleFetchRequest(request: RequestChannel.Request) {
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
+    // isFromFollower： replicaId是否大于0表示是follower
     val fetchContext = fetchManager.newContext(fetchRequest.metadata(),
           fetchRequest.fetchData(),
           fetchRequest.toForget(),
@@ -530,7 +534,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     val erroneous = mutable.ArrayBuffer[(TopicPartition, FetchResponse.PartitionData[Records])]()
+    // 数组里面是键值对... 有序？
     val interesting = mutable.ArrayBuffer[(TopicPartition, FetchRequest.PartitionData)]()
+
+    // 筛选TP, 放入interesting集合中
     if (fetchRequest.isFromFollower()) {
       // The follower must have ClusterAction on ClusterResource in order to fetch partition data.
       if (authorize(request.session, ClusterAction, Resource.ClusterResource)) {
@@ -557,6 +564,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
+    /**
+      * 消息版本降级装换
+      * @param tp
+      * @param partitionData
+      * @return
+      */
     def maybeConvertFetchedData(tp: TopicPartition,
                                 partitionData: FetchResponse.PartitionData[Records]): FetchResponse.PartitionData[BaseRecords] = {
       // Down-conversion of the fetched records is needed when the stored magic version is

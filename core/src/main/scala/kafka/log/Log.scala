@@ -788,7 +788,7 @@ class Log(@volatile var dir: File,
           }
           // 验证通过后的消息
           validRecords = validateAndOffsetAssignResult.validatedRecords
-          // 最终补全appendInfo对象
+          // 根据校验结果完善appendInfo对象
           appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
           appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
           appendInfo.lastOffset = offset.value - 1
@@ -800,7 +800,7 @@ class Log(@volatile var dir: File,
           // format conversion)
           if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
             for (batch <- validRecords.batches.asScala) {
-              // batch批不能比max.message.bytes大
+              // 每一批消息不能比max.message.bytes大
               if (batch.sizeInBytes > config.maxMessageSize) {
                 // we record the original message set size instead of the trimmed size
                 // to be consistent with pre-compression bytesRejectedRate recording

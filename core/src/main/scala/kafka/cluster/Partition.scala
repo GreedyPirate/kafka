@@ -452,10 +452,16 @@ class Partition(val topic: String,
    * fully caught up to the (local) leader's offset corresponding to this produce request before we acknowledge the
    * produce request.
    */
+  /**
+    * 这里应该就是在检查是否所有ISR中副本，已经同步完leader了
+    * @param requiredOffset lastOffset + 1. 就是LEO
+    * @return
+    */
   def checkEnoughReplicasReachOffset(requiredOffset: Long): (Boolean, Errors) = {
     leaderReplicaIfLocal match {
       case Some(leaderReplica) =>
         // keep the current immutable replica list reference
+        // ISR Set[Replica]
         val curInSyncReplicas = inSyncReplicas
 
         if (isTraceEnabled) {
@@ -473,9 +479,11 @@ class Partition(val topic: String,
            * The topic may be configured not to accept messages if there are not enough replicas in ISR
            * in this scenario the request was already appended locally and then added to the purgatory before the ISR was shrunk
            */
+          // ISR必须大于等于min.insync.replicas
           if (minIsr <= curInSyncReplicas.size)
             (true, Errors.NONE)
           else
+            // 否则报错
             (true, Errors.NOT_ENOUGH_REPLICAS_AFTER_APPEND)
         } else
           (false, Errors.NONE)

@@ -469,15 +469,17 @@ class ReplicaManager(val config: KafkaConfig,
     // 简单的校验ack合法性，-1，0，1才合法
     if (isValidRequiredAcks(requiredAcks)) {
       val sTime = time.milliseconds
-      // 写入到本地broker中
+      // 写入到本地broker中, 返回每个TPLogAppendResult => LogAppendInfo和异常
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
         isFromClient = isFromClient, entriesPerPartition, requiredAcks)
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
 
+      // produceStatus:Map[TopicPartition, ProducePartitionStatus]
+      // 这个map保存的是每个TopicPartition append后的状态，状态包括：LEO和结果，结果里面有是否append出现错误等
       val produceStatus = localProduceResults.map { case (topicPartition, result) =>
         topicPartition ->
                 ProducePartitionStatus(
-                  result.info.lastOffset + 1, // required offset
+                  result.info.lastOffset + 1, // required offset ， LEO ?
                   new PartitionResponse(result.error, result.info.firstOffset.getOrElse(-1), result.info.logAppendTime, result.info.logStartOffset)) // response status
       }
 
@@ -486,19 +488,24 @@ class ReplicaManager(val config: KafkaConfig,
       // ack为-1时需要follower同步，需要放入延迟队列中，等待条件满足后返回
       if (delayedProduceRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
         // create delayed produce operation
+        // ack和消息append后的结果
         val produceMetadata = ProduceMetadata(requiredAcks, produceStatus)
+        // 注意看里面的初始化语句块
         val delayedProduce = new DelayedProduce(timeout, produceMetadata, this, responseCallback, delayedProduceLock)
 
         // create a list of (topic, partition) pairs to use as keys for this delayed produce operation
+        // 就是TopicPartition集合
         val producerRequestKeys = entriesPerPartition.keys.map(new TopicPartitionOperationKey(_)).toSeq
 
         // try to complete the request immediately, otherwise put it into the purgatory
         // this is because while the delayed produce operation is being created, new
         // requests may arrive and hence make this operation completable.
+        // TODO 能看懂代码逻辑，但是看不懂在干什么
         delayedProducePurgatory.tryCompleteElseWatch(delayedProduce, producerRequestKeys)
 
       } else {
         // we can respond immediately
+        // 其实这是ack=1的时候，leader写入完了，就返回，之前已经处理过ack=0了
         val produceResponseStatus = produceStatus.mapValues(status => status.responseStatus)
         responseCallback(produceResponseStatus)
       }
@@ -715,6 +722,15 @@ class ReplicaManager(val config: KafkaConfig,
   // 1. required acks = -1
   // 2. there is data to append
   // 3. at least one partition append was successful (fewer errors than partitions)
+  /**
+    * 1.ack=-1
+    * 2.entriesPerPartition有数据
+    * 3.append结果异常数比entriesPerPartition小
+    * @param requiredAcks
+    * @param entriesPerPartition
+    * @param localProduceResults
+    * @return
+    */
   private def delayedProduceRequestRequired(requiredAcks: Short,
                                             entriesPerPartition: Map[TopicPartition, MemoryRecords],
                                             localProduceResults: Map[TopicPartition, LogAppendResult]): Boolean = {
@@ -754,6 +770,8 @@ class ReplicaManager(val config: KafkaConfig,
           Some(new InvalidTopicException(s"Cannot append to internal topic ${topicPartition.topic}"))))
       } else {
         try {
+          // 获取当前tp的leader Partition对象
+          // TODO 有没有可能一个分区的leader，follower副本都在一台机器上，有可能的话这里还一定时leader副本吗
           val (partition, _) = getPartitionAndLeaderReplicaIfLocal(topicPartition)
           val info = partition.appendRecordsToLeader(records, isFromClient, requiredAcks)
           val numAppendedMessages = info.numMessages
@@ -809,7 +827,7 @@ class ReplicaManager(val config: KafkaConfig,
                     responseCallback: Seq[(TopicPartition, FetchPartitionData)] => Unit,
                     isolationLevel: IsolationLevel) {
     val isFromFollower = Request.isValidBrokerId(replicaId)
-    val fetchOnlyFromLeader = replicaId != Request.DebuggingConsumerId && replicaId != Request.FutureLocalReplicaId
+    val fetchOnlyFromLeader = replicaId != Request.DebuggingConsumerId && replicaId != Request.FutureLocalReplicaId // 还有不从leader同步的？
     val fetchOnlyCommitted = !isFromFollower && replicaId != Request.FutureLocalReplicaId
 
     def readFromLog(): Seq[(TopicPartition, LogReadResult)] = {
@@ -818,7 +836,7 @@ class ReplicaManager(val config: KafkaConfig,
         fetchOnlyFromLeader = fetchOnlyFromLeader,
         readOnlyCommitted = fetchOnlyCommitted,
         fetchMaxBytes = fetchMaxBytes,
-        hardMaxBytesLimit = hardMaxBytesLimit,
+        hardMaxBytesLimit = hardMaxBytesLimit, // vision<=2，目前=8，说明为false，v2版本有最大字节限制吗？
         readPartitionInfo = fetchInfos,
         quota = quota,
         isolationLevel = isolationLevel)
@@ -984,7 +1002,7 @@ class ReplicaManager(val config: KafkaConfig,
     var limitBytes = fetchMaxBytes
     val result = new mutable.ArrayBuffer[(TopicPartition, LogReadResult)]
     var minOneMessage = !hardMaxBytesLimit
-    readPartitionInfo.foreach { case (tp, fetchInfo) =>
+    readPartitionInfo.foreach { case (tp, fetchInfo) => // 遍历每个tp，按照消费者的要求读取日志
       val readResult = read(tp, fetchInfo, limitBytes, minOneMessage)
       val recordBatchSize = readResult.info.records.sizeInBytes
       // Once we read from a non-empty partition, we stop ignoring request and partition level size limits

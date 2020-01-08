@@ -61,6 +61,7 @@ public class ByteBufferSend implements Send {
         if (written < 0)
             throw new EOFException("Wrote negative bytes to channel. This shouldn't happen.");
         remaining -= written;
+        // SSL 才有可能为false，普通的都是false
         pending = TransportLayers.hasPendingWrites(channel);
         return written;
     }

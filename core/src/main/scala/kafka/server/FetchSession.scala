@@ -736,6 +736,7 @@ class FetchManager(private val time: Time,
                  fetchData: FetchSession.REQ_MAP,
                  toForget: util.List[TopicPartition],
                  isFollower: Boolean): FetchContext = {
+    // isFull我理解是全量拉取
     val context = if (reqMetadata.isFull) {
       var removedFetchSessionStr = ""
       if (reqMetadata.sessionId != INVALID_SESSION_ID) {

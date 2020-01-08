@@ -59,10 +59,12 @@ class DelayedProduce(delayMs: Long,
   extends DelayedOperation(delayMs, lockOpt) {
 
   // first update the acks pending variable according to the error code
+  // 如果tp append没有异常，就设置acksPending=true
   produceMetadata.produceStatus.foreach { case (topicPartition, status) =>
     if (status.responseStatus.error == Errors.NONE) {
       // Timeout error state will be cleared when required acks are received
       status.acksPending = true
+      // 默认初始化为超时，之后所有副本同步完之后清除
       status.responseStatus.error = Errors.REQUEST_TIMED_OUT
     } else {
       status.acksPending = false
@@ -83,15 +85,18 @@ class DelayedProduce(delayMs: Long,
    */
   override def tryComplete(): Boolean = {
     // check for each partition if it still has pending acks
+    // 挨个检查append成功的topicPartition，它们的ISR是否比minIsr大
     produceMetadata.produceStatus.foreach { case (topicPartition, status) =>
       trace(s"Checking produce satisfaction for $topicPartition, current status $status")
       // skip those partitions that have already been satisfied
+      // 如果本地append成功
       if (status.acksPending) {
         val (hasEnough, error) = replicaManager.getPartition(topicPartition) match {
           case Some(partition) =>
             if (partition eq ReplicaManager.OfflinePartition)
               (false, Errors.KAFKA_STORAGE_ERROR)
             else
+              // 检查ISR是否比minIsr大
               partition.checkEnoughReplicasReachOffset(status.requiredOffset)
           case None =>
             // Case A

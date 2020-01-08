@@ -25,10 +25,15 @@ import org.apache.kafka.common.protocol.types.Struct;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
+/**
+ * 所有请求的抽象类
+ */
 public abstract class AbstractRequest extends AbstractRequestResponse {
 
     public static abstract class Builder<T extends AbstractRequest> {
+        // 请求类型
         private final ApiKeys apiKey;
+
         private final short oldestAllowedVersion;
         private final short latestAllowedVersion;
 
