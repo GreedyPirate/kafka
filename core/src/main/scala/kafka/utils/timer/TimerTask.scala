@@ -16,9 +16,14 @@
  */
 package kafka.utils.timer
 
+/**
+  * 时间轮中的TimerTaskEntry里的任务
+  */
 trait TimerTask extends Runnable {
 
+  // 延迟时间，号码
   val delayMs: Long // timestamp in millisecond
+
 
   private[this] var timerTaskEntry: TimerTaskEntry = null
 

@@ -226,7 +226,9 @@ public class ListOffsetRequest extends AbstractRequest {
     public ListOffsetRequest(Struct struct, short version) {
         super(version);
         Set<TopicPartition> duplicatePartitions = new HashSet<>();
+        // 消费者时为-1
         replicaId = struct.getInt(REPLICA_ID_KEY_NAME);
+        // 消费者时默认read uncommitted
         isolationLevel = struct.hasField(ISOLATION_LEVEL_KEY_NAME) ?
                 IsolationLevel.forId(struct.getByte(ISOLATION_LEVEL_KEY_NAME)) :
                 IsolationLevel.READ_UNCOMMITTED;

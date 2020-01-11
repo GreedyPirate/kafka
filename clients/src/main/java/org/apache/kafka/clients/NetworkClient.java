@@ -592,6 +592,7 @@ public class NetworkClient implements KafkaClient {
      *
      * @return The node with the fewest in-flight requests.
      */
+    // 在可用的Node里，选一个未完成请求最少的节点
     @Override
     public Node leastLoadedNode(long now) {
         List<Node> nodes = this.metadataUpdater.fetchNodes();
@@ -603,11 +604,14 @@ public class NetworkClient implements KafkaClient {
             int idx = (offset + i) % nodes.size();
             Node node = nodes.get(idx);
             int currInflight = this.inFlightRequests.count(node.idString());
+            // 如果有一个node的Inflight为0，就是一个未处理的请求都没有，直接返回
             if (currInflight == 0 && isReady(node, now)) {
                 // if we find an established connection with no in-flight requests we can stop right away
                 log.trace("Found least loaded node {} connected with no in-flight requests", node);
                 return node;
             } else if (!this.connectionStates.isBlackedOut(node.idString(), now) && currInflight < inflight) {
+                // 该node可用，并且当前未处理的请求小于inflight
+                // 懒得写了，就是一个擂台法求最小值
                 // otherwise if this is the best we have found so far, record that
                 inflight = currInflight;
                 found = node;

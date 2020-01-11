@@ -40,9 +40,9 @@ import scala.collection.mutable.Set
  * A ZooKeeper client that encourages pipelined requests.
  *
  * @param connectString comma separated host:port pairs, each corresponding to a zk server
- * @param sessionTimeoutMs session timeout in milliseconds
- * @param connectionTimeoutMs connection timeout in milliseconds
- * @param maxInFlightRequests maximum number of unacknowledged requests the client will send before blocking.
+ * @param sessionTimeoutMs session timeout in milliseconds 这应该是心跳超时，保持会话
+ * @param connectionTimeoutMs connection timeout in milliseconds 连接超时
+ * @param maxInFlightRequests maximum number of unacknowledged requests the client will send before blocking. 能持有的最大发送中请求
  */
 class ZooKeeperClient(connectString: String,
                       sessionTimeoutMs: Int,

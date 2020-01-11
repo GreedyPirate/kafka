@@ -97,6 +97,7 @@ object BrokerInfo {
 }
 
 case class BrokerInfo(broker: Broker, version: Int, jmxPort: Int) {
+  // path: /brokers/ids/0
   val path: String = BrokerIdZNode.path(broker.id)
   def toJsonBytes: Array[Byte] = BrokerIdZNode.encode(this)
 }

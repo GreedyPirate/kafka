@@ -758,14 +758,20 @@ class KafkaApis(val requestChannel: RequestChannel,
   def replicationQuota(fetchRequest: FetchRequest): ReplicaQuota =
     if (fetchRequest.isFromFollower) quotas.leader else UnboundedQuota
 
+  /**
+    * LIST_OFFSETS请求：根据请求参数中的timeStamp获取消费者(或副本)能够fetch的位移
+    * @param request
+    */
   def handleListOffsetRequest(request: RequestChannel.Request) {
     val version = request.header.apiVersion()
 
     val mergedResponseMap = if (version == 0)
       handleListOffsetRequestV0(request)
     else
+      // V1版本之后
       handleListOffsetRequestV1AndAbove(request)
 
+    // 配额限流相关
     sendResponseMaybeThrottle(request, requestThrottleMs => new ListOffsetResponse(requestThrottleMs, mergedResponseMap.asJava))
   }
 
@@ -848,31 +854,40 @@ class KafkaApis(val requestChannel: RequestChannel,
         try {
           // ensure leader exists
           val localReplica = if (offsetRequest.replicaId != ListOffsetRequest.DEBUGGING_REPLICA_ID)
+            // 获取leader
             replicaManager.getLeaderReplicaIfLocal(topicPartition)
           else
             replicaManager.getReplicaOrException(topicPartition)
 
+          // -1表示consumer
           val fromConsumer = offsetRequest.replicaId == ListOffsetRequest.CONSUMER_REPLICA_ID
+
           val found = if (fromConsumer) {
+            // 根据事务隔离级别，获取可拉取的位移
             val lastFetchableOffset = offsetRequest.isolationLevel match {
               case IsolationLevel.READ_COMMITTED => localReplica.lastStableOffset.messageOffset
+                // 默认没使用事务，用的是highWatermark
               case IsolationLevel.READ_UNCOMMITTED => localReplica.highWatermark.messageOffset
             }
 
+            // 这里的if...else...就是if (fromConsumer)的返回值
+            // reset到最新的
             if (timestamp == ListOffsetRequest.LATEST_TIMESTAMP)
+              // case class -1 和 highWatermark
               TimestampOffset(RecordBatch.NO_TIMESTAMP, lastFetchableOffset)
             else {
+              // 从log里查找出来的offset要比lastFetchableOffset小 或者是earliest
               def allowed(timestampOffset: TimestampOffset): Boolean =
                 timestamp == ListOffsetRequest.EARLIEST_TIMESTAMP || timestampOffset.offset < lastFetchableOffset
-
               fetchOffsetForTimestamp(topicPartition, timestamp)
                 .filter(allowed).getOrElse(TimestampOffset.Unknown)
             }
           } else {
+            // 不是consumer的先不看
             fetchOffsetForTimestamp(topicPartition, timestamp)
               .getOrElse(TimestampOffset.Unknown)
           }
-
+          // 这是map方法的返回，也就是在循环内
           (topicPartition, new ListOffsetResponse.PartitionData(Errors.NONE, found.timestamp, found.offset))
         } catch {
           // NOTE: These exceptions are special cased since these error messages are typically transient or the client
@@ -912,6 +927,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   private def fetchOffsetForTimestamp(topicPartition: TopicPartition, timestamp: Long): Option[TimestampOffset] = {
     replicaManager.getLog(topicPartition) match {
       case Some(log) =>
+        // 从Log的所有Segment里，根据timestamp找offset
         log.fetchOffsetsByTimestamp(timestamp)
       case None =>
         throw new UnknownTopicOrPartitionException(s"$topicPartition does not exist on the broker.")

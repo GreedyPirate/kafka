@@ -98,7 +98,9 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Send a request with the default timeout. See {@link #send(Node, AbstractRequest.Builder, int)}.
      */
+    // 这应该是个通用send方法，因为参数是AbstractRequest，它是所有请求的父类
     public RequestFuture<ClientResponse> send(Node node, AbstractRequest.Builder<?> requestBuilder) {
+        // TODO requestTimeoutMs在哪传入还没看
         return send(node, requestBuilder, requestTimeoutMs);
     }
 
@@ -523,6 +525,7 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Check if the code is disconnected and unavailable for immediate reconnection (i.e. if it is in
      * reconnect backoff window following the disconnect).
+     * 客户端无法连接某一个node：连接失败或者超时
      */
     public boolean isUnavailable(Node node) {
         lock.lock();

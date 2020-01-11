@@ -31,7 +31,7 @@ class DumpLogSegmentsTest {
 
   val tmpDir = TestUtils.tempDir()
   val logDir = TestUtils.randomPartitionLogDir(tmpDir)
-  val logFile = s"$logDir/00000000000000000000.log"
+  val logFile = "/Users/admin/private/kafka/data/test-3-0/00000000000000000000.index"
   val time = new MockTime(0, 0)
 
   @Before

@@ -19,14 +19,7 @@ package org.apache.kafka.clients.consumer.internals;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
-import org.apache.kafka.common.errors.AuthenticationException;
-import org.apache.kafka.common.errors.DisconnectException;
-import org.apache.kafka.common.errors.GroupAuthorizationException;
-import org.apache.kafka.common.errors.IllegalGenerationException;
-import org.apache.kafka.common.errors.InterruptException;
-import org.apache.kafka.common.errors.RebalanceInProgressException;
-import org.apache.kafka.common.errors.RetriableException;
-import org.apache.kafka.common.errors.UnknownMemberIdException;
+import org.apache.kafka.common.errors.*;
 import org.apache.kafka.common.metrics.Measurable;
 import org.apache.kafka.common.metrics.MetricConfig;
 import org.apache.kafka.common.metrics.Metrics;
@@ -36,18 +29,8 @@ import org.apache.kafka.common.metrics.stats.Count;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.requests.FindCoordinatorRequest;
-import org.apache.kafka.common.requests.FindCoordinatorResponse;
-import org.apache.kafka.common.requests.HeartbeatRequest;
-import org.apache.kafka.common.requests.HeartbeatResponse;
-import org.apache.kafka.common.requests.JoinGroupRequest;
+import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.requests.JoinGroupRequest.ProtocolMetadata;
-import org.apache.kafka.common.requests.JoinGroupResponse;
-import org.apache.kafka.common.requests.LeaveGroupRequest;
-import org.apache.kafka.common.requests.LeaveGroupResponse;
-import org.apache.kafka.common.requests.OffsetCommitRequest;
-import org.apache.kafka.common.requests.SyncGroupRequest;
-import org.apache.kafka.common.requests.SyncGroupResponse;
 import org.apache.kafka.common.utils.KafkaThread;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
@@ -225,15 +208,19 @@ public abstract class AbstractCoordinator implements Closeable {
         final long startTimeMs = time.milliseconds();
         long elapsedTime = 0L;
 
+        // 循环直至coordinator可用
         while (coordinatorUnknown()) {
+            // 查找coordinator
             final RequestFuture<Void> future = lookupCoordinator();
+            // 一直发生请求，直到future返回结果
             client.poll(future, remainingTimeAtLeastZero(timeoutMs, elapsedTime));
             if (!future.isDone()) {
                 // ran out of time
                 break;
             }
-
+            // 处理失败
             if (future.failed()) {
+                // 重试
                 if (future.isRetriable()) {
                     elapsedTime = time.milliseconds() - startTimeMs;
 
@@ -247,6 +234,7 @@ public abstract class AbstractCoordinator implements Closeable {
             } else if (coordinator != null && client.isUnavailable(coordinator)) {
                 // we found the coordinator, but the connection has failed, so mark
                 // it dead and backoff before retrying discovery
+                // 发现coordinator连不上，标记Coordinator未知，断开连接，之后进行重试
                 markCoordinatorUnknown();
                 final long sleepTime = Math.min(retryBackoffMs, remainingTimeAtLeastZero(timeoutMs, elapsedTime));
                 time.sleep(sleepTime);
@@ -257,14 +245,17 @@ public abstract class AbstractCoordinator implements Closeable {
         return !coordinatorUnknown();
     }
 
+    // 查找Coordinator，初始化了AbstractCoordinator.this.coordinator变量
     protected synchronized RequestFuture<Void> lookupCoordinator() {
         if (findCoordinatorFuture == null) {
             // find a node to ask about the coordinator
+            // 找到当前未完成的请求最少的node
             Node node = this.client.leastLoadedNode();
             if (node == null) {
                 log.debug("No broker available to send FindCoordinator request");
                 return RequestFuture.noBrokersAvailable();
             } else
+                // 向该node发送Coordinator查询请求
                 findCoordinatorFuture = sendFindCoordinatorRequest(node);
         }
         return findCoordinatorFuture;
@@ -655,7 +646,7 @@ public abstract class AbstractCoordinator implements Closeable {
                      .compose(new FindCoordinatorResponseHandler());
     }
 
-    private class FindCoordinatorResponseHandler extends RequestFutureAdapter<ClientResponse, Void> {
+    private class FindCoordinatorResponseHandler extends RequestFutureAdapter<ClientResponse, Void> { // 泛型表示handler的参数和返回值
 
         @Override
         public void onSuccess(ClientResponse resp, RequestFuture<Void> future) {
@@ -664,18 +655,22 @@ public abstract class AbstractCoordinator implements Closeable {
 
             FindCoordinatorResponse findCoordinatorResponse = (FindCoordinatorResponse) resp.responseBody();
             Errors error = findCoordinatorResponse.error();
+            // 查询Coordinator响应结果处理
             if (error == Errors.NONE) {
                 synchronized (AbstractCoordinator.this) {
                     // use MAX_VALUE - node.id as the coordinator id to allow separate connections
                     // for the coordinator in the underlying network client layer
+                    // coordinatorConnectionId是计算出来的，而且是幂等的，感觉是个技巧性的代码
                     int coordinatorConnectionId = Integer.MAX_VALUE - findCoordinatorResponse.node().id();
-
+                    // 初始化coordinator：connectionId，ip和端口
                     AbstractCoordinator.this.coordinator = new Node(
                             coordinatorConnectionId,
                             findCoordinatorResponse.node().host(),
                             findCoordinatorResponse.node().port());
                     log.info("Discovered group coordinator {}", coordinator);
+                    // 这里应该是向coordinator所在的机器的Acceptor发送OP_CONNECT请求了
                     client.tryConnect(coordinator);
+                    // 链接成功，相当于一次heartbeat
                     heartbeat.resetTimeouts(time.milliseconds());
                 }
                 future.complete(null);
@@ -709,6 +704,7 @@ public abstract class AbstractCoordinator implements Closeable {
      * @return the current coordinator or null if it is unknown
      */
     protected synchronized Node checkAndGetCoordinator() {
+        // coordinator不为空并且连接不上coordinator节点
         if (coordinator != null && client.isUnavailable(coordinator)) {
             markCoordinatorUnknown(true);
             return null;
@@ -724,6 +720,10 @@ public abstract class AbstractCoordinator implements Closeable {
         markCoordinatorUnknown(false);
     }
 
+    /**
+     * 释放coordinator引用，并且客户端断开连接
+     * @param isDisconnected
+     */
     protected synchronized void markCoordinatorUnknown(boolean isDisconnected) {
         if (this.coordinator != null) {
             log.info("Group coordinator {} is unavailable or invalid, will attempt rediscovery", this.coordinator);
@@ -956,6 +956,9 @@ public abstract class AbstractCoordinator implements Closeable {
         }
     }
 
+    /**
+     * 心跳线程
+     */
     private class HeartbeatThread extends KafkaThread {
         private boolean enabled = false;
         private boolean closed = false;
@@ -1010,6 +1013,8 @@ public abstract class AbstractCoordinator implements Closeable {
                             continue;
                         }
 
+                        // 离开了消费者组，或者被coordinator踢出了消费者组
+                        // 设置enabled=false
                         if (state != MemberState.STABLE) {
                             // the group is not stable (perhaps because we left the group or because the coordinator
                             // kicked us out), so disable heartbeats and wait for the main thread to rejoin.
@@ -1092,6 +1097,9 @@ public abstract class AbstractCoordinator implements Closeable {
 
     }
 
+    /**
+     * rebalance计数器
+     */
     protected static class Generation {
         public static final Generation NO_GENERATION = new Generation(
                 OffsetCommitRequest.DEFAULT_GENERATION_ID,

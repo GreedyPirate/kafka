@@ -89,7 +89,7 @@ class DelayedProduce(delayMs: Long,
     produceMetadata.produceStatus.foreach { case (topicPartition, status) =>
       trace(s"Checking produce satisfaction for $topicPartition, current status $status")
       // skip those partitions that have already been satisfied
-      // 如果本地append成功
+      // acksPending表示正在进行副本同步，同步完为false
       if (status.acksPending) {
         val (hasEnough, error) = replicaManager.getPartition(topicPartition) match {
           case Some(partition) =>
@@ -111,6 +111,7 @@ class DelayedProduce(delayMs: Long,
     }
 
     // check if every partition has satisfied at least one of case A or B
+    // 不存在acksPending表示同步完了
     if (!produceMetadata.produceStatus.values.exists(_.acksPending))
       forceComplete()
     else

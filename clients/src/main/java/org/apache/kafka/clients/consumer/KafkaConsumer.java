@@ -1170,8 +1170,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 client.maybeTriggerWakeup();
 
                 final long metadataEnd;
+                // 每一次fetch请求之前，都会先检查coordinator
                 if (includeMetadataInTimeout) {
-                    final long metadataStart = time.milliseconds();
+                    final long metadataStart = time.milliseconds(); // SystemTime
                     if (!updateAssignmentMetadataIfNeeded(remainingTimeAtLeastZero(timeoutMs, elapsedTime))) {
                         return ConsumerRecords.empty();
                     }
@@ -1193,6 +1194,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
+                    /**
+                     * 立即开始下一轮请求，和用户处理消息并行
+                     */
                     if (fetcher.sendFetches() > 0 || client.hasPendingRequests()) {
                         client.pollNoWakeup();
                     }
@@ -1200,6 +1204,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     return this.interceptors.onConsume(new ConsumerRecords<>(records));
                 }
                 final long fetchEnd = time.milliseconds();
+                // fetchEnd - metadataEnd是真正用来发请求的所消耗的时间
+                // timeoutMs设置的足够大，应该是可以保证fetch多次的
                 elapsedTime += fetchEnd - metadataEnd;
 
             } while (elapsedTime < timeoutMs);
@@ -1215,10 +1221,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     boolean updateAssignmentMetadataIfNeeded(final long timeoutMs) {
         final long startMs = time.milliseconds();
+        // 返回false表示获取coordinator失败
         if (!coordinator.poll(timeoutMs)) {
             return false;
         }
 
+        // 返回true,更新要fetch的Position
         return updateFetchPositions(remainingTimeAtLeastZero(timeoutMs, time.milliseconds() - startMs));
     }
 
@@ -2160,6 +2168,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     }
 
     /**
+     * 把fetch position设置为committed position
+     * 没有就根据reset policy向broker请求
      * Set the fetch position to the committed position (if there is one)
      * or reset it using the offset reset policy the user has configured.
      *
@@ -2169,6 +2179,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return true iff the operation completed without timing out
      */
     private boolean updateFetchPositions(final long timeoutMs) {
+        // 是否所有订阅的TP都有position
         cachedSubscriptionHashAllFetchPositions = subscriptions.hasAllFetchPositions();
         if (cachedSubscriptionHashAllFetchPositions) return true;
 
@@ -2177,11 +2188,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         // coordinator lookup if there are partitions which have missing positions, so
         // a consumer with manually assigned partitions can avoid a coordinator dependence
         // by always ensuring that assigned partitions have an initial position.
+        // 向coordinator OFFSET_FETCH请求，更新那些既没有position, 也没有auto.offset.reset的TP
         if (!coordinator.refreshCommittedOffsetsIfNeeded(timeoutMs)) return false;
 
         // If there are partitions still needing a position and a reset policy is defined,
         // request reset using the default policy. If no reset strategy is defined and there
         // are partitions with a missing position, then we will raise an exception.
+        // 有offset Rest策略的，根据reset策略重置position，比如earliest或者latest
         subscriptions.resetMissingPositions();
 
         // Finally send an asynchronous request to lookup and update the positions of any

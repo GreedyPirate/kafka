@@ -136,6 +136,7 @@ case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, i
  *
  * @param dir The directory in which log segments are created.
  * @param config The log configuration settings
+ * logStartOffset： 能够暴露给客户端最早的offset(我理解为拉取)， ListOffsetRequest的响应，为了避免用户seek到超出范围的offset，保证logStartOffset <= highWatermark
  * @param logStartOffset The earliest offset allowed to be exposed to kafka client.
  *                       The logStartOffset can be updated by :
  *                       - user's DeleteRecordsRequest
@@ -1255,20 +1256,28 @@ class Log(@volatile var dir: File,
           s"for partition $topicPartition is ${config.messageFormatVersion} which is earlier than the minimum " +
           s"required version $KAFKA_0_10_0_IV0")
 
+      //
       // Cache to avoid race conditions. `toBuffer` is faster than most alternatives and provides
       // constant time access while being safe to use with concurrent collections unlike `toArray`.
+      // 所有的LogSegment，
       val segmentsCopy = logSegments.toBuffer
       // For the earliest and latest, we do not need to return the timestamp.
       if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP)
+        // earliest返回logStartOffset：当前TP在日志自动清理后，目前最小的offset
         return Some(TimestampOffset(RecordBatch.NO_TIMESTAMP, logStartOffset))
       else if (targetTimestamp == ListOffsetRequest.LATEST_TIMESTAMP)
+        // latest返回LEO 但是为什么返回LEO呢，万一一直没提交呢，返回HW不是更稳妥吗
         return Some(TimestampOffset(RecordBatch.NO_TIMESTAMP, logEndOffset))
 
+      // earliest，latest之外的类型：Timestamp表示具体的时间戳，-1，-2只是表示了2个特殊的offset
       val targetSeg = {
         // Get all the segments whose largest timestamp is smaller than target timestamp
-        val earlierSegs = segmentsCopy.takeWhile(_.largestTimestamp < targetTimestamp)
+        // 先找segments，找第一个Segment的最大Timestamp大于请求中的Timestamp，可以看下takeWhile源码
+        val earlierSegs = segmentsCopy.takeWhile(_.largestTimestamp < targetTimestamp) // takeWhile牛逼啊，一直循环，只要不满足表示式停止
         // We need to search the first segment whose largest timestamp is greater than the target timestamp if there is one.
+        // 再找offset
         if (earlierSegs.length < segmentsCopy.length)
+          // 没看懂...
           Some(segmentsCopy(earlierSegs.length))
         else
           None

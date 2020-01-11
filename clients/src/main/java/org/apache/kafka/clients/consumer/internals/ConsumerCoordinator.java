@@ -298,6 +298,11 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param timeoutMs The amount of time, in ms, allotted for this operation.
      * @return true iff the operation succeeded
      */
+    /**
+     * 轮询协调者event，保证已知协调者，还用于自动位移提交
+     * @param timeoutMs
+     * @return
+     */
     public boolean poll(final long timeoutMs) {
         final long startTime = time.milliseconds();
         long currentTime = startTime;
@@ -305,16 +310,23 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         invokeCompletedOffsetCommitCallbacks();
 
+        /**
+         * 是否手动制定了TP
+         */
         if (subscriptions.partitionsAutoAssigned()) {
             // Always update the heartbeat last poll time so that the heartbeat thread does not leave the
             // group proactively due to application inactivity even if (say) the coordinator cannot be found.
+            // 将消息拉取时间记为心跳线程最后一次拉取时间，那么说明是把消息拉取记为一次心跳
             pollHeartbeat(currentTime);
 
+            // coordinator是否未知，连不上或者超时
             if (coordinatorUnknown()) {
+
                 if (!ensureCoordinatorReady(remainingTimeAtLeastZero(timeoutMs, elapsed))) {
                     return false;
                 }
                 currentTime = time.milliseconds();
+                // elapsed 就是已用时间
                 elapsed = currentTime - startTime;
             }
 
@@ -540,6 +552,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         long elapsedTime = 0L;
 
         while (true) {
+            // 确保Coordinator可用
             if (!ensureCoordinatorReady(remainingTimeAtLeastZero(timeoutMs, elapsedTime))) return null;
             elapsedTime = time.milliseconds() - startMs;
 

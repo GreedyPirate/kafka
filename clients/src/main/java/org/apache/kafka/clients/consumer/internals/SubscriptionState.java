@@ -108,6 +108,7 @@ public class SubscriptionState {
         if (listener == null)
             throw new IllegalArgumentException("RebalanceListener cannot be null");
 
+        // 定TP的类型，是说consumer消费的TP是自动分配的，对用的有assign手动指定
         setSubscriptionType(SubscriptionType.AUTO_TOPICS);
 
         this.rebalanceListener = listener;
@@ -379,14 +380,18 @@ public class SubscriptionState {
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
             TopicPartition tp = state.topicPartition();
             TopicPartitionState partitionState = state.value();
+            // 缺失position的TP
             if (partitionState.isMissingPosition()) {
+                // defaultResetStrategy就是设置的auto.offset.reset，根据文档注释，设置为NONE会抛异常
                 if (defaultResetStrategy == OffsetResetStrategy.NONE)
                     partitionsWithNoOffsets.add(tp);
                 else
+                    // 设置position重置策略，清空原来的position
                     partitionState.reset(defaultResetStrategy);
             }
         }
 
+        // 对应文档中的抛异常
         if (!partitionsWithNoOffsets.isEmpty())
             throw new NoOffsetForPartitionException(partitionsWithNoOffsets);
     }
@@ -500,6 +505,7 @@ public class SubscriptionState {
         }
 
         private boolean isMissingPosition() {
+            // 好绕... position==null && == resetStrategy
             return !hasValidPosition() && !awaitingReset();
         }
 

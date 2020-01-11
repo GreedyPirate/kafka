@@ -63,10 +63,18 @@ abstract class DelayedOperation(override val delayMs: Long,
    * the first thread will succeed in completing the operation and return
    * true, others will still return false
    */
+  /**
+    * 我对这个方法的理解：
+    * 延迟操作的完成条件有2个：1.过了delayedMs， 2. 没到delayedMs,操作提前完成
+    * 这个方法就是情形2
+    * @return
+    */
   def forceComplete(): Boolean = {
     if (completed.compareAndSet(false, true)) {
       // cancel the timeout timer
+      // 从延迟任务里移除
       cancel()
+      // 调用具体延迟操作实现类的完成方法
       onComplete()
       true
     } else {
@@ -81,12 +89,14 @@ abstract class DelayedOperation(override val delayMs: Long,
 
   /**
    * Call-back to execute when a delayed operation gets expired and hence forced to complete.
+    * 任务过期
    */
   def onExpiration(): Unit
 
   /**
    * Process for completing an operation; This function needs to be defined
    * in subclasses and will be called exactly once in forceComplete()
+    * 具体完成是要做的操作，子类实现
    */
   def onComplete(): Unit
 
@@ -110,6 +120,8 @@ abstract class DelayedOperation(override val delayMs: Long,
    * of threadA or threadB will attempt completion of the operation if this flag is set. This ensures that
    * every invocation of `maybeTryComplete` is followed by at least one invocation of `tryComplete` until
    * the operation is actually completed.
+    *
+    * tryComplete的线程安全实现
    */
   private[server] def maybeTryComplete(): Boolean = {
     var retry = false
@@ -138,6 +150,7 @@ abstract class DelayedOperation(override val delayMs: Long,
 
   /*
    * run() method defines a task that is executed on timeout
+   * DelayedOperation实现了Runnable
    */
   override def run(): Unit = {
     if (forceComplete())
@@ -152,7 +165,9 @@ object DelayedOperationPurgatory {
                                    purgeInterval: Int = 1000,
                                    reaperEnabled: Boolean = true,
                                    timerEnabled: Boolean = true): DelayedOperationPurgatory[T] = {
+    // 初始化时间轮
     val timer = new SystemTimer(purgatoryName)
+    // T <: DelayedOperation : 是不是说每一种DelayedOperation都有一个时间轮
     new DelayedOperationPurgatory[T](purgatoryName, timer, brokerId, purgeInterval, reaperEnabled, timerEnabled)
   }
 

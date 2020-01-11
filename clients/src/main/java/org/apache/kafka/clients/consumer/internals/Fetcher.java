@@ -383,10 +383,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         if (exception != null)
             throw exception;
 
+        // 所有需要reset offset的TP
         Set<TopicPartition> partitions = subscriptions.partitionsNeedingReset(time.milliseconds());
         if (partitions.isEmpty())
             return;
 
+        // 每个TP reset的策略 {@link ListOffsetRequest EARLIEST_TIMESTAMP LATEST_TIMESTAMP}
         final Map<TopicPartition, Long> offsetResetTimestamps = new HashMap<>();
         for (final TopicPartition partition : partitions) {
             Long timestamp = offsetResetStrategyTimestamp(partition);
@@ -394,6 +396,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                 offsetResetTimestamps.put(partition, timestamp);
         }
 
+        // reset过程
         resetOffsetsAsync(offsetResetTimestamps);
     }
 
@@ -608,13 +611,16 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         for (TopicPartition tp : partitionResetTimestamps.keySet())
             metadata.add(tp.topic());
 
+        // 把要reset的TP安装Node分组
         Map<Node, Map<TopicPartition, Long>> timestampsToSearchByNode =
                 groupListOffsetRequests(partitionResetTimestamps, new HashSet<>());
+
         for (Map.Entry<Node, Map<TopicPartition, Long>> entry : timestampsToSearchByNode.entrySet()) {
             Node node = entry.getKey();
             final Map<TopicPartition, Long> resetTimestamps = entry.getValue();
             subscriptions.setResetPending(resetTimestamps.keySet(), time.milliseconds() + requestTimeoutMs);
 
+            // 又发送了LIST_OFFSETS请求？
             RequestFuture<ListOffsetResult> future = sendListOffsetRequest(node, resetTimestamps, false);
             future.addListener(new RequestFutureListener<ListOffsetResult>() {
                 @Override
@@ -862,12 +868,17 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         }
     }
 
+    /**
+     * SubscriptionState里保存了当前consumer分配的TP，
+     * @return
+     */
     private List<TopicPartition> fetchablePartitions() {
         Set<TopicPartition> exclude = new HashSet<>();
         List<TopicPartition> fetchable = subscriptions.fetchablePartitions();
         if (nextInLineRecords != null && !nextInLineRecords.isFetched) {
             exclude.add(nextInLineRecords.partition);
         }
+        // 排除上一轮已完成
         for (CompletedFetch completedFetch : completedFetches) {
             exclude.add(completedFetch.partition);
         }
@@ -878,6 +889,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     /**
      * Create fetch requests for all nodes for which we have assigned partitions
      * that have no existing requests in flight.
+     *
+     * 把要请求的TP按照Node分组，如果Node上还有进行中的请求，就先跳过这个Node
      */
     private Map<Node, FetchSessionHandler.FetchRequestData> prepareFetchRequests() {
         Cluster cluster = metadata.fetch();
@@ -887,12 +900,14 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             if (node == null) {
                 metadata.requestUpdate();
             } else if (client.isUnavailable(node)) {
+                // 节点不可达，检查下是不是因为认证失败，如果是就抛出来
                 client.maybeThrowAuthFailure(node);
 
                 // If we try to send during the reconnect blackout window, then the request is just
                 // going to be failed anyway before being sent, so skip the send for now
                 log.trace("Skipping fetch for partition {} because node {} is awaiting reconnect backoff", partition, node);
             } else if (client.hasPendingRequests(node)) {
+                //如果Node上还有进行中的请求，就先跳过这个Node
                 log.trace("Skipping fetch for partition {} because there is an in-flight request to {}", partition, node);
             } else {
                 // if there is a leader and no in-flight requests, issue a new fetch
@@ -940,7 +955,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             } else if (error == Errors.NONE) {
                 // we are interested in this fetch only if the beginning offset matches the
                 // current consumed position
+                // 获取上一次拉取的位移
                 Long position = subscriptions.position(tp);
+                // 要拉取的位移和上一次消费国的位移不一致
                 if (position == null || position != fetchOffset) {
                     log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
                             "the expected offset {}", tp, fetchOffset, position);
