@@ -22,6 +22,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 
+/**
+ * 先看做一个简单的VO，里面有2个变量：epoch和sessionId，
+ * 应该是每个client都有一个唯一的sessionId，每fetch一次，epoch加1 (nextIncremental方法)
+ */
 public class FetchMetadata {
     public static final Logger log = LoggerFactory.getLogger(FetchMetadata.class);
 
@@ -87,6 +91,8 @@ public class FetchMetadata {
 
     /**
      * Returns true if this is a full fetch request.
+     * INITIAL_EPOCH：表示client想新建一个session
+     * FINAL_EPOCH：表示client想关闭一个session
      */
     public boolean isFull() {
         return (this.epoch == INITIAL_EPOCH) || (this.epoch == FINAL_EPOCH);

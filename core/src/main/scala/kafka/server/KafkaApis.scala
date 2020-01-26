@@ -522,10 +522,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     val versionId = request.header.apiVersion
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
-    // isFromFollower： replicaId是否大于0表示是follower
+
+
     val fetchContext = fetchManager.newContext(fetchRequest.metadata(),
           fetchRequest.fetchData(),
           fetchRequest.toForget(),
+          // isFromFollower： replicaId是否大于0表示是follower
           fetchRequest.isFromFollower())
 
     def errorResponse[T >: MemoryRecords <: BaseRecords](error: Errors): FetchResponse.PartitionData[T] = {

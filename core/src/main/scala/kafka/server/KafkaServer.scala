@@ -199,6 +199,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         brokerState.newState(Starting)
 
         /* setup zookeeper */
+        // time
         initZkClient(time)
 
         /* Get or create cluster_id */

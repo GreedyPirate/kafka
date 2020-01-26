@@ -82,7 +82,8 @@ versions += [
   slf4j: "1.7.25",
   snappy: "1.1.7.1",
   zkclient: "0.10",
-  zookeeper: "3.4.13"
+  zookeeper: "3.4.13",
+  log4j_bugfix: "1.7.25"
 ]
 
 libs += [
@@ -140,5 +141,6 @@ libs += [
   zkclient: "com.101tec:zkclient:$versions.zkclient",
   zookeeper: "org.apache.zookeeper:zookeeper:$versions.zookeeper",
   jfreechart: "jfreechart:jfreechart:$versions.jfreechart",
-  mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact"
+  mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact",
+  log4jBugFix:"org.slf4j:slf4j-log4j12:$versions.log4j_bugfix"
 ]

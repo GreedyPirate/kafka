@@ -35,6 +35,7 @@ import scala.collection.{mutable, _}
 import scala.collection.JavaConverters._
 
 object FetchSession {
+  // 这应该是fetch请求中每个TP的参数
   type REQ_MAP = util.Map[TopicPartition, FetchRequest.PartitionData]
   type RESP_MAP = util.LinkedHashMap[TopicPartition, FetchResponse.PartitionData[Records]]
   type CACHE_MAP = ImplicitLinkedHashSet[CachedPartition]
@@ -243,10 +244,12 @@ case class FetchSession(val id: Int,
         partitionMap.mustAdd(newCachedPart)
         added.add(topicPart)
       } else {
+        // 这一步才是最精彩的，它会更新缓存里的客户端请求参数
         cachedPart.updateRequestParams(reqData)
         updated.add(topicPart)
       }
     })
+    // 从toForget里移除该TP
     toForget.iterator.asScala.foreach(p => {
       if (partitionMap.remove(new CachedPartition(p.topic, p.partition))) {
         removed.add(p)
@@ -268,11 +271,13 @@ case class FetchSession(val id: Int,
 trait FetchContext extends Logging {
   /**
     * Get the fetch offset for a given partition.
+    * 获取该TP能够fetch的位移
     */
   def getFetchOffset(part: TopicPartition): Option[Long]
 
   /**
     * Apply a function to each partition in the fetch request.
+    * 传一个函数对象，处理循环中的tp
     */
   def foreachPartition(fun: (TopicPartition, FetchRequest.PartitionData) => Unit): Unit
 
@@ -732,11 +737,20 @@ class FetchSessionCache(private val maxEntries: Int,
 
 class FetchManager(private val time: Time,
                    private val cache: FetchSessionCache) extends Logging {
+  /**
+    * 1.1.0版本加入了session的概念，全量和增量的fetch
+    * https://www.codercto.com/a/65751.html
+    * https://www.cnblogs.com/huxi2b/p/9335064.html
+    * @param reqMetadata 用了import的重命名 JFetchMetadata就是FetchMetadata，它是client的fetch元数据
+    * @param fetchData 这是client fetch request中的数据，fetch哪些分区，及要fetch的位移，大小等
+    * @param toForget
+    * @param isFollower
+    * @return
+    */
   def newContext(reqMetadata: JFetchMetadata,
                  fetchData: FetchSession.REQ_MAP,
                  toForget: util.List[TopicPartition],
                  isFollower: Boolean): FetchContext = {
-    // isFull我理解是全量拉取
     val context = if (reqMetadata.isFull) {
       var removedFetchSessionStr = ""
       if (reqMetadata.sessionId != INVALID_SESSION_ID) {
@@ -769,6 +783,7 @@ class FetchManager(private val time: Time,
                 s"${session.epoch}, but got ${reqMetadata.epoch} instead.");
               new SessionErrorContext(Errors.INVALID_FETCH_SESSION_EPOCH, reqMetadata)
             } else {
+              // 真正的逻辑在这，更新session缓存里的请求参数
               val (added, updated, removed) = session.update(fetchData, toForget, reqMetadata)
               if (session.isEmpty) {
                 debug(s"Created a new sessionless FetchContext and closing session id ${session.id}, " +
@@ -777,16 +792,19 @@ class FetchManager(private val time: Time,
                 cache.remove(session)
                 new SessionlessFetchContext(fetchData)
               } else {
+                // 请求更新了分区数
                 if (session.size != session.cachedSize) {
                   // If the number of partitions in the session changed, update the session's
                   // position in the cache.
                   cache.touch(session, session.lastUsedMs)
                 }
+                // session的epoch+1
                 session.epoch = JFetchMetadata.nextEpoch(session.epoch)
                 debug(s"Created a new incremental FetchContext for session id ${session.id}, " +
                   s"epoch ${session.epoch}: added ${partitionsToLogString(added)}, " +
                   s"updated ${partitionsToLogString(updated)}, " +
                   s"removed ${partitionsToLogString(removed)}")
+                // 构建IncrementalFetchContext
                 new IncrementalFetchContext(time, reqMetadata, session)
               }
             }

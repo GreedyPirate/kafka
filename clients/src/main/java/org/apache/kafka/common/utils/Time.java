@@ -20,18 +20,22 @@ package org.apache.kafka.common.utils;
  * An interface abstracting the clock to use in unit testing classes that make use of clock time.
  *
  * Implementations of this class should be thread-safe.
+ * 时间辅助类
  */
 public interface Time {
 
+    // 子类实现
     Time SYSTEM = new SystemTime();
 
     /**
      * Returns the current time in milliseconds.
+     * 毫秒
      */
     long milliseconds();
 
     /**
      * Returns the value returned by `nanoseconds` converted into milliseconds.
+     * 纳秒转毫秒
      */
     long hiResClockMs();
 

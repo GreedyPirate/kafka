@@ -565,6 +565,7 @@ project(':core') {
       exclude module: 'log4j'
       exclude module: 'netty'
     }
+    compile(libs.log4jBugFix)
 
     compileOnly libs.log4j
 
@@ -1099,27 +1100,27 @@ project(':streams:examples') {
 }
 
 project(':streams:upgrade-system-tests-0100') {
-  archivesBaseName = "kafka-streams-upgrade-system-tests-0100"
+    archivesBaseName = "kafka-streams-upgrade-system-tests-0100"
 
-  dependencies {
-    testCompile libs.kafkaStreams_0100
-  }
+    dependencies {
+        testCompile libs.kafkaStreams_0100
+    }
 
-  systemTestLibs {
-    dependsOn testJar
-  }
+    systemTestLibs {
+        dependsOn testJar
+    }
 }
 
 project(':streams:upgrade-system-tests-0101') {
-  archivesBaseName = "kafka-streams-upgrade-system-tests-0101"
+    archivesBaseName = "kafka-streams-upgrade-system-tests-0101"
 
-  dependencies {
-    testCompile libs.kafkaStreams_0101
-  }
+    dependencies {
+        testCompile libs.kafkaStreams_0101
+    }
 
-  systemTestLibs {
-    dependsOn testJar
-  }
+    systemTestLibs {
+        dependsOn testJar
+    }
 }
 
 project(':streams:upgrade-system-tests-0102') {
