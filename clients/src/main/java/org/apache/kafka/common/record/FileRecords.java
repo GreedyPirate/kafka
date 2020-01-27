@@ -78,7 +78,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
             // set the file position to the last byte in the file
             channel.position(limit);
         }
-
+        // 主要看这里，不要怀疑为什么只有start，end是final修饰，已经是全局变量赋完值了
         batches = batchesFrom(start);
     }
 
@@ -381,7 +381,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
             end = this.end;
         else
             end = this.sizeInBytes();
+        // 当前FileRecords，从start到end截取的"流"
         FileLogInputStream inputStream = new FileLogInputStream(this, start, end);
+        // 返回一个迭代器，里面的元素是从文件里读取的一个一个RecordBatch
         return new RecordBatchIterator<>(inputStream);
     }
 

@@ -173,7 +173,7 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
             FETCH_RESPONSE_V7, FETCH_RESPONSE_V8};
     }
 
-
+    // 发生异常时用的
     public static final long INVALID_HIGHWATERMARK = -1L;
     public static final long INVALID_LAST_STABLE_OFFSET = -1L;
     public static final long INVALID_LOG_START_OFFSET = -1L;
@@ -306,6 +306,16 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
         this.responseData = responseData;
         this.throttleTimeMs = throttleTimeMs;
         this.sessionId = sessionId;
+    }
+
+    @Override
+    public String toString() {
+        return "FetchResponse{" +
+                "throttleTimeMs=" + throttleTimeMs +
+                ", error=" + error +
+                ", sessionId=" + sessionId +
+                ", responseData=" + responseData +
+                '}';
     }
 
     public static FetchResponse<MemoryRecords> parse(Struct struct) {

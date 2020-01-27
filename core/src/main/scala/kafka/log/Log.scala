@@ -1108,10 +1108,14 @@ class Log(@volatile var dir: File,
   /**
    * Read messages from the log.
    *
-   * @param startOffset The offset to begin reading at
-   * @param maxLength The maximum number of bytes to read
-   * @param maxOffset The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set)
-   * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxLength` (if one exists)
+   * @param startOffset 从哪里fetch:
+    *                    The offset to begin reading at
+   * @param maxLength fetch的maxBytes:
+    *                  The maximum number of bytes to read
+   * @param maxOffset fetch的上限，即高水位线:
+    *                  The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set)
+   * @param minOneMessage 是否至少fetch一条，即使的大小它已经超出了maxBytes:
+    *                      If this is true, the first message will be returned even if it exceeds `maxLength` (if one exists)
    * @param isolationLevel The isolation level of the fetcher. The READ_UNCOMMITTED isolation level has the traditional
    *                       read semantics (e.g. consumers are limited to fetching up to the high watermark). In
    *                       READ_COMMITTED, consumers are limited to fetching up to the last stable offset. Additionally,
@@ -1129,8 +1133,11 @@ class Log(@volatile var dir: File,
 
       // Because we don't use lock for reading, the synchronization is a little bit tricky.
       // We create the local variables to avoid race conditions with updates to the log.
+      // 使用局部变量来避免并发锁竞争，nextOffsetMetadata.messageOffset就是LEO
       val currentNextOffsetMetadata = nextOffsetMetadata
       val next = currentNextOffsetMetadata.messageOffset
+
+      // 事务部分，先不关心
       if (startOffset == next) {
         val abortedTransactions =
           if (isolationLevel == IsolationLevel.READ_COMMITTED) Some(List.empty[AbortedTransaction])
@@ -1138,10 +1145,13 @@ class Log(@volatile var dir: File,
         return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY, firstEntryIncomplete = false,
           abortedTransactions = abortedTransactions)
       }
-
+      // segments是一个跳表做的map，key为Segment的baseOffset，value是LogSegment对象
+      // floorEntry是干嘛的？看哪个LogSegment的baseOffset <= startOffset，其实就是在找要读取的LogSegment
+      // segmentEntry是一个entry: <baseOffset,LogSegment>
       var segmentEntry = segments.floorEntry(startOffset)
 
       // return error on attempt to read beyond the log end offset or read below log start offset
+      // 异常处理，大于LEO肯定不对，没找到合适的LogSegment也是不对的，至于startOffset < logStartOffset感觉很多余
       if (startOffset > next || segmentEntry == null || startOffset < logStartOffset)
         throw new OffsetOutOfRangeException(s"Received request for offset $startOffset for partition $topicPartition, " +
           s"but we only have log segments in the range $logStartOffset to $next.")
@@ -1150,15 +1160,23 @@ class Log(@volatile var dir: File,
       // but if that segment doesn't contain any messages with an offset greater than that
       // continue to read from successive segments until we get some messages or we reach the end of the log
       while (segmentEntry != null) {
+        // 取出LogSegment
         val segment = segmentEntry.getValue
 
+        // 如果fetch读取了active Segment(最后一个正在写入的LogSegment)，在LEO更新前，发生了两次fetch会产生并发竞争，
+        // 那么第二次fetch可能会发生OffsetOutOfRangeException，因此我们限制读取已暴露的位置(下面的maxPosition变量)，而不是active Segment的LEO
         // If the fetch occurs on the active segment, there might be a race condition where two fetch requests occur after
         // the message is appended but before the nextOffsetMetadata is updated. In that case the second fetch may
         // cause OffsetOutOfRangeException. To solve that, we cap the reading up to exposed position instead of the log
         // end of the active segment.
+        /**
+          * maxPosition大概是说segmentEntry如果是最后一个(active Segment)就返回LEO，
+          * 否则返回当前Segment的大小
+          */
         val maxPosition = {
           if (segmentEntry == segments.lastEntry) {
             val exposedPos = nextOffsetMetadata.relativePositionInSegment.toLong
+            // 这个check again真的有用吗，为了解决bug？有点low
             // Check the segment again in case a new segment has just rolled out.
             if (segmentEntry != segments.lastEntry)
             // New log segment has rolled out, we can read up to the file end.
@@ -1169,11 +1187,20 @@ class Log(@volatile var dir: File,
             segment.size
           }
         }
+        /**
+          * 总结一下这几个入参
+          * startOffset：从哪个位置开始读
+          * maxOffset：读取的上限，高水位线
+          * maxLength：读取的maxBytes
+          * maxPosition：目前不知道什么用，LEO或者Segment的size
+          * minOneMessage：是否至少读第一条
+          */
         val fetchInfo = segment.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
         if (fetchInfo == null) {
           segmentEntry = segments.higherEntry(segmentEntry.getKey)
         } else {
           return isolationLevel match {
+            // 这里的fetchInfo作为返回值
             case IsolationLevel.READ_UNCOMMITTED => fetchInfo
             case IsolationLevel.READ_COMMITTED => addAbortedTransactions(startOffset, segmentEntry, fetchInfo)
           }

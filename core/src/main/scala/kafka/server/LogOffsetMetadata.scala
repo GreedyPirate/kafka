@@ -33,6 +33,7 @@ object LogOffsetMetadata {
 }
 
 /*
+ * 这应该是所有位移的抽象类，包括：hw，LEO，LSO等
  * A log offset structure, including:
  *  1. the message offset
  *  2. the base message offset of the located segment

@@ -84,6 +84,7 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
         if (magic < RecordBatch.MAGIC_VALUE_V2)
             batch = new LegacyFileChannelRecordBatch(offset, magic, channel, position, size);
         else
+            // 这里是核心
             batch = new DefaultFileChannelRecordBatch(offset, magic, channel, position, size);
 
         position += batch.sizeInBytes();

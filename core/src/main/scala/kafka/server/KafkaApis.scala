@@ -523,20 +523,20 @@ class KafkaApis(val requestChannel: RequestChannel,
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
 
-
+    // FetchSession来做增量的fetch请求
     val fetchContext = fetchManager.newContext(fetchRequest.metadata(),
           fetchRequest.fetchData(),
           fetchRequest.toForget(),
           // isFromFollower： replicaId是否大于0表示是follower
           fetchRequest.isFromFollower())
 
+    // 传入一个Error，返回发送异常时的Response
     def errorResponse[T >: MemoryRecords <: BaseRecords](error: Errors): FetchResponse.PartitionData[T] = {
       new FetchResponse.PartitionData[T](error, FetchResponse.INVALID_HIGHWATERMARK, FetchResponse.INVALID_LAST_STABLE_OFFSET,
         FetchResponse.INVALID_LOG_START_OFFSET, null, MemoryRecords.EMPTY)
     }
 
     val erroneous = mutable.ArrayBuffer[(TopicPartition, FetchResponse.PartitionData[Records])]()
-    // 数组里面是键值对... 有序？
     val interesting = mutable.ArrayBuffer[(TopicPartition, FetchRequest.PartitionData)]()
 
     // 筛选TP, 放入interesting集合中
@@ -556,6 +556,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     } else {
       // Regular Kafka consumers need READ permission on each partition they are fetching.
+      // consumer要有READ读权限，而且在metadata里有记录
       fetchContext.foreachPartition { (topicPartition, data) =>
         if (!authorize(request.session, Read, Resource(Topic, topicPartition.topic, LITERAL)))
           erroneous += topicPartition -> errorResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
@@ -567,7 +568,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     /**
-      * 消息版本降级装换
+      * 客户端版本较低时，消息版本降级装换
       * @param tp
       * @param partitionData
       * @return
@@ -582,6 +583,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       // lower version, this check will no longer be valid and we will fail to down-convert the messages
       // which were written in the new format prior to the version downgrade.
       val unconvertedRecords = partitionData.records
+      // LogConfig：日志相关配置VO类
       val logConfig = replicaManager.getLogConfig(tp)
       val downConvertMagic =
         logConfig.map(_.messageFormatVersion.recordVersion.value).flatMap { magic =>
@@ -594,6 +596,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
 
       // For fetch requests from clients, check if down-conversion is disabled for the particular partition
+      // message.downconversion.enable
       if (downConvertMagic.isDefined && !fetchRequest.isFromFollower && !logConfig.forall(_.messageDownConversionEnable)) {
         trace(s"Conversion to message format ${downConvertMagic.get} is disabled for partition $tp. Sending unsupported version response to $clientId.")
         errorResponse(Errors.UNSUPPORTED_VERSION)
@@ -647,6 +650,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           // record the bytes out metrics only when the response is being sent
           brokerTopicStats.updateBytesOut(topicPartition.topic, fetchRequest.isFromFollower, data.records.sizeInBytes)
         }
+        info(s"fetch response is ${response}")
         response
       }
 
@@ -713,7 +717,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         fetchRequest.replicaId,
         fetchRequest.minBytes,
         fetchRequest.maxBytes,
-        versionId <= 2,
+        versionId <= 2, // 从后面的代码看，version <= 2时，至少返回第一条消息，哪怕它的大小超出了maxBytes
         interesting,
         replicationQuota(fetchRequest),
         processResponseCallback,
@@ -773,7 +777,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       // V1版本之后
       handleListOffsetRequestV1AndAbove(request)
 
-    // 配额限流相关
+    info(s"clientId is : ${request.header.clientId()}, offset response: ${mergedResponseMap}")
     sendResponseMaybeThrottle(request, requestThrottleMs => new ListOffsetResponse(requestThrottleMs, mergedResponseMap.asJava))
   }
 

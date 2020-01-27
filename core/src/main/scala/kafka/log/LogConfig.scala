@@ -66,6 +66,11 @@ object Defaults {
   val MessageDownConversionEnable = kafka.server.Defaults.MessageDownConversionEnable
 }
 
+/**
+  * 日志配置相关的集合类
+  * @param props
+  * @param overriddenConfigs
+  */
 case class LogConfig(props: java.util.Map[_, _], overriddenConfigs: Set[String] = Set.empty)
   extends AbstractConfig(LogConfig.configDef, props, false) {
   /**

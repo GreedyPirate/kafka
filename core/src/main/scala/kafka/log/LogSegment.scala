@@ -270,11 +270,16 @@ class LogSegment private[log] (val log: FileRecords,
    * Read a message set from this segment beginning with the first offset >= startOffset. The message set will include
    * no more than maxSize bytes and will end before maxOffset if a maxOffset is specified.
    *
-   * @param startOffset A lower bound on the first offset to include in the message set we read
-   * @param maxOffset An optional maximum offset for the message set we read
-   * @param maxSize The maximum number of bytes to include in the message set we read
-   * @param maxPosition The maximum position in the log segment that should be exposed for read
-   * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxSize` (if one exists)
+   * @param startOffset 从哪个位置开始读：
+    *                    A lower bound on the first offset to include in the message set we read
+   * @param maxOffset 读取的上限，高水位线：
+    *                  An optional maximum offset for the message set we read
+   * @param maxSize 读取的maxBytes：
+    *                The maximum number of bytes to include in the message set we read
+   * @param maxPosition 目前不知道什么用，LEO或者Segment的size：
+    *                    The maximum position in the log segment that should be exposed for read
+   * @param minOneMessage 是否至少读第一条：
+    *                      If this is true, the first message will be returned even if it exceeds `maxSize` (if one exists)
    *
    * @return The fetched data and the offset metadata of the first message whose offset is >= startOffset,
    *         or null if the startOffset is larger than the largest offset in this log
@@ -282,10 +287,13 @@ class LogSegment private[log] (val log: FileRecords,
   @threadsafe
   def read(startOffset: Long, maxOffset: Option[Long], maxSize: Int, maxPosition: Long = size,
            minOneMessage: Boolean = false): FetchDataInfo = {
+    // 这么晚才校验，差评
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
 
+    // 日志文件字节数大小
     val logSize = log.sizeInBytes // this may change, need to save a consistent copy
+    // 从index文件里查找
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -324,6 +332,7 @@ class LogSegment private[log] (val log: FileRecords,
         min(min(maxPosition, endPosition) - startPosition, adjustedMaxSize).toInt
     }
 
+    // log.slice方法是在真正的读取消息
     FetchDataInfo(offsetMetadata, log.slice(startPosition, fetchSize),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }

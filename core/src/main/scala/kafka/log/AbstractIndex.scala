@@ -295,6 +295,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
    * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
    */
   protected def largestLowerBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int =
+    // _1表示第一个返回值
     indexSlotRangeFor(idx, target, searchEntity)._1
 
   /**
