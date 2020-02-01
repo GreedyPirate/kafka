@@ -1108,9 +1108,9 @@ class Log(@volatile var dir: File,
   /**
    * Read messages from the log.
    *
-   * @param startOffset 从哪里fetch:
+   * @param startOffset 从哪里fetch，它是从fetch请求中获取的:
     *                    The offset to begin reading at
-   * @param maxLength fetch的maxBytes:
+   * @param maxLength fetch的maxBytes-已读取的消息大小:
     *                  The maximum number of bytes to read
    * @param maxOffset fetch的上限，即高水位线:
     *                  The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set)
@@ -1156,6 +1156,10 @@ class Log(@volatile var dir: File,
         throw new OffsetOutOfRangeException(s"Received request for offset $startOffset for partition $topicPartition, " +
           s"but we only have log segments in the range $logStartOffset to $next.")
 
+      /**
+        * 从baseOffset小于指定offset的Segment里读取消息，但如果Segment里没有消息，
+        * 就继续往后面的Segment读,知道读取到了消息，或者到达了log的末尾
+        */
       // Do the read on the segment with a base offset less than the target offset
       // but if that segment doesn't contain any messages with an offset greater than that
       // continue to read from successive segments until we get some messages or we reach the end of the log
@@ -1200,13 +1204,14 @@ class Log(@volatile var dir: File,
           segmentEntry = segments.higherEntry(segmentEntry.getKey)
         } else {
           return isolationLevel match {
-            // 这里的fetchInfo作为返回值
+            // 默认是READ_UNCOMMITTED，这里的fetchInfo作为返回值
             case IsolationLevel.READ_UNCOMMITTED => fetchInfo
             case IsolationLevel.READ_COMMITTED => addAbortedTransactions(startOffset, segmentEntry, fetchInfo)
           }
         }
       }
 
+      // 上面的while执行到最后一个Segment都还没return，说明我们要读取的消息都被删除了，这种情况返回空消息
       // okay we are beyond the end of the last segment with no data fetched although the start offset is in range,
       // this can happen when all messages with offset larger than start offsets have been deleted.
       // In this case, we will return the empty set with log end offset metadata

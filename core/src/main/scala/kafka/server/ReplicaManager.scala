@@ -853,28 +853,47 @@ class ReplicaManager(val config: KafkaConfig,
     val logReadResults = readFromLog()
 
     // check if this fetch request can be satisfied right away
+    // LogReadResult集合
     val logReadResultValues = logReadResults.map { case (_, v) => v }
+    // 读取的消息大小之和
     val bytesReadable = logReadResultValues.map(_.info.records.sizeInBytes).sum
+    // false传给了errorIncurred参数
+    // 结果中是否有错误
     val errorReadingData = logReadResultValues.foldLeft(false) ((errorIncurred, readResult) =>
       errorIncurred || (readResult.error != Errors.NONE))
 
-    // 能够立即返回给客户端的4种情况
+    /**
+      * 能够立即返回给客户端的4种情况
+      * 1. fetch请求没有大于0的wait时间，fetch.max.wait.ms
+      * 2. fetch请求要拉取的分区为空
+      * 3. 根据fetch.min.bytes的设置，有足够的数据返回
+      * 4. 出现异常
+      */
     // respond immediately if 1) fetch request does not want to wait
     //                        2) fetch request does not require any data
     //                        3) has enough data to respond
     //                        4) some error happens while reading data
     if (timeout <= 0 || fetchInfos.isEmpty || bytesReadable >= fetchMinBytes || errorReadingData) {
+      // fetchPartitionData是一个TopicPartition -> FetchPartitionData 的map集合
       val fetchPartitionData = logReadResults.map { case (tp, result) =>
         tp -> FetchPartitionData(result.error, result.highWatermark, result.leaderLogStartOffset, result.info.records,
           result.lastStableOffset, result.info.abortedTransactions)
       }
+      // 调用响应回调函数
       responseCallback(fetchPartitionData)
-    } else {
+    } else { // 创建响应的DelayOption，放入purgatory中，等待完成
+
       // construct the fetch results from the read results
       val fetchPartitionStatus = logReadResults.map { case (topicPartition, result) =>
+        // collectFirst：根据function find first element
+        // fetchInfos是请求参数(TopicPartition, PartitionData)集合，
+        // 意思就是从读取结果logReadResults里的TopicPartition和fetchInfos里的TopicPartition匹配
+        // 找出该TopicPartition的PartitionData请求参数
         val fetchInfo = fetchInfos.collectFirst {
           case (tp, v) if tp == topicPartition => v
         }.getOrElse(sys.error(s"Partition $topicPartition not found in fetchInfos"))
+
+        // 赋值给外层的fetchPartitionStatus
         (topicPartition, FetchPartitionStatus(result.info.fetchOffsetMetadata, fetchInfo))
       }
       val fetchMetadata = FetchMetadata(fetchMinBytes, fetchMaxBytes, hardMaxBytesLimit, fetchOnlyFromLeader,
@@ -882,11 +901,13 @@ class ReplicaManager(val config: KafkaConfig,
       val delayedFetch = new DelayedFetch(timeout, fetchMetadata, this, quota, isolationLevel, responseCallback)
 
       // create a list of (topic, partition) pairs to use as keys for this delayed fetch operation
+      // 以分区为delay的watchKey
       val delayedFetchKeys = fetchPartitionStatus.map { case (tp, _) => new TopicPartitionOperationKey(tp) }
 
       // try to complete the request immediately, otherwise put it into the purgatory;
       // this is because while the delayed fetch operation is being created, new requests
       // may arrive and hence make this operation completable.
+      // 放入Purgatory中
       delayedFetchPurgatory.tryCompleteElseWatch(delayedFetch, delayedFetchKeys)
     }
   }
@@ -903,7 +924,15 @@ class ReplicaManager(val config: KafkaConfig,
                        quota: ReplicaQuota,
                        isolationLevel: IsolationLevel): Seq[(TopicPartition, LogReadResult)] = {
 
-    // 读取一个分区里的消息
+    /**
+      * 又是先定义后调用，从后面的代码块这是在遍历请求参数中的TopicPartition集合
+      * 作用是读取一个分区里的消息
+      * @param tp 要读取的分区
+      * @param fetchInfo 读取的参数，如从哪里开始读，读多少
+      * @param limitBytes fetchMaxBytes参数
+      * @param minOneMessage 是否至少读第一条后立即返回，即使它比fetchMaxBytes大，true
+      * @return 读取的结果
+      */
     def read(tp: TopicPartition, fetchInfo: PartitionData, limitBytes: Int, minOneMessage: Boolean): LogReadResult = {
       val offset = fetchInfo.fetchOffset //从哪fetch
       val partitionFetchSize = fetchInfo.maxBytes // fetch多少
@@ -952,21 +981,21 @@ class ReplicaManager(val config: KafkaConfig,
         val fetchTimeMs = time.milliseconds // 当前时间
         val logReadInfo = localReplica.log match {
           case Some(log) =>
-            // TODO 目前还没搞清楚PartitionData里的maxBytes和FetchRequest的maxBytes什么区别
-            // limitBytes是请求参数中的maxBytes
+            // partitionFetchSize是maxBytes，limitBytes是maxBytes-已读取的消息大小
             val adjustedFetchSize = math.min(partitionFetchSize, limitBytes)
 
             // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
             val fetch = log.read(offset, adjustedFetchSize, maxOffsetOpt, minOneMessage, isolationLevel)
 
             // If the partition is being throttled, simply return an empty set.
+            // 超出配额(被限流)时返回一个空消息
             if (shouldLeaderThrottle(quota, tp, replicaId))
               FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
             // For FetchRequest version 3, we replace incomplete message sets with an empty one as consumers can make
             // progress in such cases and don't need to report a `RecordTooLargeException`
             else if (!hardMaxBytesLimit && fetch.firstEntryIncomplete)
               FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
-            else fetch
+            else fetch // 返回正常的结果给logReadInfo变量
 
           case None =>
             error(s"Leader for partition $tp does not have a local log")
@@ -1024,6 +1053,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Once we read from a non-empty partition, we stop ignoring request and partition level size limits
       if (recordBatchSize > 0)
         minOneMessage = false
+      // fetchMaxBytes 减去 已读取的消息大小
       limitBytes = math.max(0, limitBytes - recordBatchSize)
       result += (tp -> readResult)
     }

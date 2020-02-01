@@ -274,7 +274,7 @@ class LogSegment private[log] (val log: FileRecords,
     *                    A lower bound on the first offset to include in the message set we read
    * @param maxOffset 读取的上限，高水位线：
     *                  An optional maximum offset for the message set we read
-   * @param maxSize 读取的maxBytes：
+   * @param maxSize fetch的maxBytes-已读取的消息大小：
     *                The maximum number of bytes to include in the message set we read
    * @param maxPosition 目前不知道什么用，LEO或者Segment的size：
     *                    The maximum position in the log segment that should be exposed for read
@@ -287,13 +287,13 @@ class LogSegment private[log] (val log: FileRecords,
   @threadsafe
   def read(startOffset: Long, maxOffset: Option[Long], maxSize: Int, maxPosition: Long = size,
            minOneMessage: Boolean = false): FetchDataInfo = {
-    // 这么晚才校验，差评
+    // 这里判断没毛病，maxSize=maxBytes-已读取的消息大小
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
 
     // 日志文件字节数大小
     val logSize = log.sizeInBytes // this may change, need to save a consistent copy
-    // 从index文件里查找
+    // 从index文件里查找offset,position
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -332,7 +332,7 @@ class LogSegment private[log] (val log: FileRecords,
         min(min(maxPosition, endPosition) - startPosition, adjustedMaxSize).toInt
     }
 
-    // log.slice方法是在真正的读取消息
+    // log.slice方法是在真正的获取消息
     FetchDataInfo(offsetMetadata, log.slice(startPosition, fetchSize),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }
