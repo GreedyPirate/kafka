@@ -69,6 +69,7 @@ do
   fi
 done
 
+
 if [ -z "$UPGRADE_KAFKA_STREAMS_TEST_VERSION" ]; then
   clients_lib_dir=$(dirname $0)/../clients/build/libs
   streams_lib_dir=$(dirname $0)/../streams/build/libs
