@@ -199,17 +199,17 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         brokerState.newState(Starting)
 
         /* setup zookeeper */
-        // time
         initZkClient(time)
 
         /* Get or create cluster_id */
+        // 获取或创建 /cluster/id 目录
         _clusterId = getOrGenerateClusterId(zkClient)
         info(s"Cluster ID = $clusterId")
 
         /* generate brokerId */
         val (brokerId, initialOfflineDirs) = getBrokerIdAndOfflineDirs
-        config.brokerId = brokerId
-        logContext = new LogContext(s"[KafkaServer id=${config.brokerId}] ")
+        config.brokerId = brokerId // 重新在内存中初始化config.brokerId，brokerId是从log.dir/meta.properties文件中获取的
+        logContext = new LogContext(s"[KafkaServer id=${config.brokerId}] ") // logIdent
         this.logIdent = logContext.logPrefix
 
         // initialize dynamic broker configs from ZooKeeper. Any updates made after this will be
@@ -254,10 +254,12 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         replicaManager = createReplicaManager(isShuttingDown)
         replicaManager.startup()
 
-        val brokerInfo = createBrokerInfo
+        val brokerInfo = createBrokerInfo // BrokerInfo: {Broker{id,EndPoint,rack}, apiversion, jmxport}
+        // 注册 /brokers/ids/0 节点
         zkClient.registerBrokerInZk(brokerInfo)
 
         // Now that the broker id is successfully registered, checkpoint it
+        // 确保meta.properties写入version和broker.id
         checkpointBrokerId(config.brokerId)
 
         /* start token manager */
@@ -287,11 +289,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           authZ
         }
 
+        // fetch request的fetch session相关
         val fetchManager = new FetchManager(Time.SYSTEM,
           new FetchSessionCache(config.maxIncrementalFetchSessionCacheSlots,
             KafkaServer.MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
 
         /* start processing requests */
+        // 干活的都是KafkaApis，它需要
         apis = new KafkaApis(socketServer.requestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
           kafkaController, zkClient, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
           fetchManager, brokerTopicStats, clusterId, time, tokenManager)
@@ -364,6 +368,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     // make sure chroot path exists
     chrootOption.foreach { chroot =>
       val zkConnForChrootCreation = config.zkConnect.substring(0, chrootIndex)
+      // 这里创建的是临时连接，仅为了创建chroot
       val zkClient = createZkClient(zkConnForChrootCreation, secureAclsEnabled)
       zkClient.makeSurePersistentPathExists(chroot)
       info(s"Created zookeeper path $chroot")
@@ -676,12 +681,12 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
           error(s"Fail to read $brokerMetaPropsFile under log directory $logDir", e)
       }
     }
-
+    // log.dir/meta.properties文件里的brokerId只能有一个，否则就是多个broker共用了一个log.dir
     if (brokerIdSet.size > 1)
       throw new InconsistentBrokerIdException(
         s"Failed to match broker.id across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
         s"or partial data was manually copied from another broker. Found $brokerIdSet")
-    else if (brokerId >= 0 && brokerIdSet.size == 1 && brokerIdSet.last != brokerId)
+    else if (brokerId >= 0 && brokerIdSet.size == 1 && brokerIdSet.last != brokerId) // meta.properties.brokerId = config.brokerId
       throw new InconsistentBrokerIdException(
         s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerIdSet.last} in meta.properties. " +
         s"If you moved your data, make sure your configured broker.id matches. " +
@@ -689,7 +694,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     else if (brokerIdSet.isEmpty && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
       brokerId = generateBrokerId
     else if (brokerIdSet.size == 1) // pick broker.id from meta.properties
-      brokerId = brokerIdSet.last
+      brokerId = brokerIdSet.last // 最终的brokerId是从meta.properties里获取的
 
 
     (brokerId, offlineDirs)

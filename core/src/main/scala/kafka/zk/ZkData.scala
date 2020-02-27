@@ -274,6 +274,11 @@ object TopicPartitionStateZNode {
     Json.encodeAsBytes(Map("version" -> 1, "leader" -> leaderAndIsr.leader, "leader_epoch" -> leaderAndIsr.leaderEpoch,
       "controller_epoch" -> controllerEpoch, "isr" -> leaderAndIsr.isr.asJava).asJava)
   }
+
+  /**
+    * /brokers/topics/user_center_event/partitions/0/state
+    * {"controller_epoch":19,"leader":0,"version":1,"leader_epoch":57,"isr":[0,1,2]}
+    */
   def decode(bytes: Array[Byte], stat: Stat): Option[LeaderIsrAndControllerEpoch] = {
     Json.parseBytes(bytes).map { js =>
       val leaderIsrAndEpochInfo = js.asJsonObject

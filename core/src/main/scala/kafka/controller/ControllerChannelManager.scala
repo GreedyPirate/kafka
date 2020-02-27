@@ -200,6 +200,9 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
 case class QueueItem(apiKey: ApiKeys, request: AbstractRequest.Builder[_ <: AbstractRequest],
                      callback: AbstractResponse => Unit, enqueueTimeMs: Long)
 
+/**
+  * broker之间通信的请求处理线程，又是内存请求队列的模式：queue: BlockingQueue[QueueItem]
+  */
 class RequestSendThread(val controllerId: Int,
                         val controllerContext: ControllerContext,
                         val queue: BlockingQueue[QueueItem],

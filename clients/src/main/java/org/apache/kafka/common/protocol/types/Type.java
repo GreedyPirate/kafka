@@ -26,6 +26,14 @@ import java.nio.ByteBuffer;
 
 /**
  * A serializable type
+ * Byte	  1	8	-2的7次方到2的7次方-1
+ * Short  2	16	-2的15次方到2的15次方-1
+ * Int	  4	32	-2的31次方到2的31次方-1
+ * char	  2	16
+ * Float  4	32	3.402823e+38 ~ 1.401298e-45
+ * Long	  8	64	-2的63次方到2的63次方-1
+ * Double 8	64	1.797693e+308~ 4.9000000e-324
+ * boolean	1(前7位是0,即1/8bit)	8
  */
 public abstract class Type {
 
@@ -96,6 +104,7 @@ public abstract class Type {
     public static final DocumentedType BOOLEAN = new DocumentedType() {
         @Override
         public void write(ByteBuffer buffer, Object o) {
+            // 1为true，0为false
             if ((Boolean) o)
                 buffer.put((byte) 1);
             else
@@ -105,6 +114,7 @@ public abstract class Type {
         @Override
         public Object read(ByteBuffer buffer) {
             byte value = buffer.get();
+            // 非0为true，可以不是1
             return value != 0;
         }
 
@@ -172,6 +182,7 @@ public abstract class Type {
     public static final DocumentedType INT16 = new DocumentedType() {
         @Override
         public void write(ByteBuffer buffer, Object o) {
+            // short 2个字节，16位
             buffer.putShort((Short) o);
         }
 
@@ -319,18 +330,22 @@ public abstract class Type {
             byte[] bytes = Utils.utf8((String) o);
             if (bytes.length > Short.MAX_VALUE)
                 throw new SchemaException("String length " + bytes.length + " is larger than the maximum string length.");
+            // 先存length，后面才是字符串
             buffer.putShort((short) bytes.length);
             buffer.put(bytes);
         }
 
         @Override
         public String read(ByteBuffer buffer) {
+            // 先读length，并做校验
             short length = buffer.getShort();
             if (length < 0)
                 throw new SchemaException("String length " + length + " cannot be negative");
             if (length > buffer.remaining())
                 throw new SchemaException("Error reading string of length " + length + ", only " + buffer.remaining() + " bytes available");
+            // 读取真正的内容
             String result = Utils.utf8(buffer, length);
+            // 移动游标
             buffer.position(buffer.position() + length);
             return result;
         }

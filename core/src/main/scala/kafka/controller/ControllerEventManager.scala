@@ -31,6 +31,13 @@ import scala.collection._
 object ControllerEventManager {
   val ControllerEventThreadName = "controller-event-thread"
 }
+
+/**
+  * ControllerEventManager用一个队列管理了所有不同类型的zk监听事件(ControllerEvent)
+  * @param controllerId
+  * @param rateAndTimeMetrics
+  * @param eventProcessedListener
+  */
 class ControllerEventManager(controllerId: Int, rateAndTimeMetrics: Map[ControllerState, KafkaTimer],
                              eventProcessedListener: ControllerEvent => Unit) extends KafkaMetricsGroup {
 
@@ -89,6 +96,7 @@ class ControllerEventManager(controllerId: Int, rateAndTimeMetrics: Map[Controll
             case e: Throwable => error(s"Error processing event $controllerEvent", e)
           }
 
+          // metric监听
           try eventProcessedListener(controllerEvent)
           catch {
             case e: Throwable => error(s"Error while invoking listener for processed event $controllerEvent", e)

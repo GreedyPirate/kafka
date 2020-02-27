@@ -750,8 +750,18 @@ class Log(@volatile var dir: File,
    * @return Information about the appended messages including the first and last offset.
    */
   private def append(records: MemoryRecords, isFromClient: Boolean, assignOffsets: Boolean, leaderEpoch: Int): LogAppendInfo = {
+    /**
+      * records：消息
+      * isFromClient=true
+      * assignOffsets=true 分配offset还是用消息中自带的offset
+      * leaderEpoch
+      */
     maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
+      /**
+        * 每条消息的CRC校验
+        */
       val appendInfo = analyzeAndValidateRecords(records, isFromClient = isFromClient)
+      info(s"analyze之后的 lastOffset : ${appendInfo.lastOffset}")
 
       // return if we have no valid messages or if this is a duplicate of the last appended entry
       if (appendInfo.shallowCount == 0)
@@ -792,7 +802,9 @@ class Log(@volatile var dir: File,
           // 根据校验结果完善appendInfo对象
           appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
           appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
+          // 经过打日志，offset.value就是LEO，-1之后就是当前日志的最后一条消息
           appendInfo.lastOffset = offset.value - 1
+          info(s"assignOffsets is ${assignOffsets}, nextOffsetMetadata.messageOffset value : ${offset.value}, lastOffset is ${appendInfo.lastOffset}")
           appendInfo.recordConversionStats = validateAndOffsetAssignResult.recordConversionStats
           if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME)
             appendInfo.logAppendTime = now
@@ -1013,6 +1025,8 @@ class Log(@volatile var dir: File,
     var readFirstMessage = false
     var lastOffsetOfFirstBatch = -1L
 
+//    info(s"MemoryRecords is ${records}")
+
     for (batch <- records.batches.asScala) {
       // we only validate V2 and higher to avoid potential compatibility issues with older clients
       if (batch.magic >= RecordBatch.MAGIC_VALUE_V2 && isFromClient && batch.baseOffset != 0)
@@ -1025,6 +1039,7 @@ class Log(@volatile var dir: File,
       // When appending to the leader, we will update LogAppendInfo.baseOffset with the correct value. In the follower
       // case, validation will be more lenient.
       // Also indicate whether we have the accurate first offset or not
+      // readFirstMessage就是想取第一批消息的数据
       if (!readFirstMessage) {
         if (batch.magic >= RecordBatch.MAGIC_VALUE_V2)
           firstOffset = Some(batch.baseOffset)
@@ -1033,6 +1048,7 @@ class Log(@volatile var dir: File,
       }
 
       // check that offsets are monotonically increasing
+      // offset是否单调递增
       if (lastOffset >= batch.lastOffset)
         monotonic = false
 
@@ -1066,8 +1082,25 @@ class Log(@volatile var dir: File,
 
     // Apply broker-side compression if any
     val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
-    LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
+     /*
+      * @param firstOffset v2版本都是0
+      * @param lastOffset 消息集(MemoryRecords)中最后一条消息的位移
+      * @param maxTimestamp 消息集(MemoryRecords)中最大的Timestamp，一般就是最后一条消息的时间戳
+      * @param offsetOfMaxTimestamp 最大时间戳对应的位移
+      * @param logAppendTime -1，RecordBatch.NO_TIMESTAMP
+      * @param logStartOffset 这是当前所有Segment的起始位移(过期的会清楚)
+      * @param recordConversionStats assignOffsets=false时为null，此时为EMPTY
+      * @param sourceCodec 生产者设置的压缩
+      * @param targetCodec broker设置的压缩
+      * @param shallowCount 浅层message的个数，未压缩都是1
+      * @param validBytes 验证过的消息字节数
+      * @param offsetsMonotonic 消息位移是否单调递增
+      * @param lastOffsetOfFirstBatch 第一批消息的lastOffset
+      */
+    val appendInfo = LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic, lastOffsetOfFirstBatch)
+//    info(s"analyzeAndValidateRecords append info is ${appendInfo.toString}")
+    appendInfo
   }
 
   private def updateProducers(batch: RecordBatch,

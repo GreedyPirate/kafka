@@ -42,7 +42,7 @@ class BrokerMetadataCheckpoint(val file: File) extends Logging {
         try {
           brokerMetaProps.store(fileOutputStream, "")
           fileOutputStream.flush()
-          fileOutputStream.getFD().sync()
+          fileOutputStream.getFD().sync() // 强制从内存刷新到磁盘中
         } finally {
           Utils.closeQuietly(fileOutputStream, temp.getName)
         }

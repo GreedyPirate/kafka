@@ -64,6 +64,8 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   // Only for testing
   private[kafka] def currentZooKeeper: ZooKeeper = zooKeeperClient.currentZooKeeper
 
+
+
   /**
    * Create a sequential persistent path. That is, the znode will not be automatically deleted upon client's disconnect
    * and a monotonically increasing number will be appended to its name.
@@ -80,7 +82,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   def registerBrokerInZk(brokerInfo: BrokerInfo): Unit = {
-    val path = brokerInfo.path
+    val path = brokerInfo.path // /brokers/ids/0
     checkedEphemeralCreate(path, brokerInfo.toJsonBytes)
     info(s"Registered broker ${brokerInfo.broker.id} at path $path with addresses: ${brokerInfo.broker.endPoints}")
   }
@@ -304,8 +306,9 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   /**
-   * Gets all brokers in the cluster.
-   * @return sequence of brokers in the cluster.
+    * Gets all brokers in the cluster.
+    * /brokers/ids/0存储的数据格式： {@link BrokerIdZNode#decode(id: Int, jsonBytes: Array[Byte]): BrokerInfo decode}
+    * @return sequence of brokers in the cluster.
    */
   def getAllBrokersInCluster: Seq[Broker] = {
     val brokerIds = getSortedBrokerList
@@ -431,6 +434,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   /**
+   * 删除 /log_dir_event_notification/log_dir_event_0,1...的节点
    * Deletes all log dir event notifications.
    */
   def deleteLogDirEventNotifications(): Unit = {
@@ -455,11 +459,12 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
 
   /**
    * Gets the assignments for the given topics.
+   * Map[TopicPartition, Seq[Replica]]
    * @param topics the topics whose partitions we wish to get the assignments for.
    * @return the replica assignment for each partition from the given topics.
    */
   def getReplicaAssignmentForTopics(topics: Set[String]): Map[TopicPartition, Seq[Int]] = {
-    val getDataRequests = topics.map(topic => GetDataRequest(TopicZNode.path(topic), ctx = Some(topic)))
+    val getDataRequests = topics.map(topic => GetDataRequest(TopicZNode.path(topic), ctx = Some(topic))) // ctx就是用来保存topic参数，可以在Response中获取
     val getDataResponses = retryRequestsUntilConnected(getDataRequests.toSeq)
     getDataResponses.flatMap { getDataResponse =>
       val topic = getDataResponse.ctx.get.asInstanceOf[String]
@@ -673,6 +678,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   /**
+    *  获取 /admin/reassign_partitions节点的数据？ zk中没有该节点，此处返回Code.NONODE
    * Returns all reassignments.
    * @return the reassignments for each partition.
    */
@@ -897,10 +903,11 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
    * @return optional integer that is Some if the controller znode exists and can be parsed and None otherwise.
    */
   def getControllerId: Option[Int] = {
+    // /controller -> {"version":1,"brokerid":0,"timestamp":"1582610063256"}
     val getDataRequest = GetDataRequest(ControllerZNode.path)
     val getDataResponse = retryRequestUntilConnected(getDataRequest)
     getDataResponse.resultCode match {
-      case Code.OK => ControllerZNode.decode(getDataResponse.data)
+      case Code.OK => ControllerZNode.decode(getDataResponse.data) // 返回brokerid
       case Code.NONODE => None
       case _ => throw getDataResponse.resultException.get
     }
@@ -1492,15 +1499,20 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
     while (remainingRequests.nonEmpty) {
       val batchResponses = zooKeeperClient.handleRequests(remainingRequests)
 
+      // metric ...
       batchResponses.foreach(response => latencyMetric.update(response.metadata.responseTimeMs))
 
       // Only execute slow path if we find a response with CONNECTIONLOSS
+      // 发现连接丢失错误的处理
       if (batchResponses.exists(_.resultCode == Code.CONNECTIONLOSS)) {
+        // zip方法：合并集合 A(1,2,3), B(4,5,6)
+        // 合并结果: [(1,4),(2,5),(3,6)]
         val requestResponsePairs = remainingRequests.zip(batchResponses)
 
         remainingRequests.clear()
         requestResponsePairs.foreach { case (request, response) =>
           if (response.resultCode == Code.CONNECTIONLOSS)
+            // 相当于是重新放进请求队列了，怪不得要判断remainingRequests.nonEmpty
             remainingRequests += request
           else
             responses += response
@@ -1509,6 +1521,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
         if (remainingRequests.nonEmpty)
           zooKeeperClient.waitUntilConnected()
       } else {
+        // 否则就是正常处理，返回结果
         remainingRequests.clear()
         responses ++= batchResponses
       }

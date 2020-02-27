@@ -662,7 +662,7 @@ class Partition(val topic: String,
     // inReadLock是一个柯里化函数，第二个参数是一个函数，返回值是LogAppendInfo和HW是否增加的bool值
     // 相当于给方法加了读锁
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
-      // leaderReplicaIfLocal表示本地broker中的leader副本
+      // leaderReplicaIfLocal是在调用方法，返回Option[Replica]对象
       leaderReplicaIfLocal match {
         //如果存在的话
         case Some(leaderReplica) =>
@@ -682,9 +682,11 @@ class Partition(val topic: String,
 
           // 真正的消息追加交给Log对象
           val info = log.appendAsLeader(records, leaderEpoch = this.leaderEpoch, isFromClient)
+          // 写入完消息，尝试触发Fetch请求，比如满足消费者的fetch.max.bytes
           // probably unblock some follower fetch requests since log end offset has been updated
           replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))
           // we may need to increment high watermark since ISR could be down to 1
+          // 新增leader的HW
           (info, maybeIncrementLeaderHW(leaderReplica))
 
         case None =>

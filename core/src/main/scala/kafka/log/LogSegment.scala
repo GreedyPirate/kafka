@@ -154,7 +154,9 @@ class LogSegment private[log] (val log: FileRecords,
         maxTimestampSoFar = largestTimestamp
         offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
       }
+      // offsetIndex和timeIndex的添加
       // append an entry to the index (if needed)
+      // indexIntervalBytes = index.interval.bytes， 每4KB的消息，建立一个索引
       if (bytesSinceLastIndexEntry > indexIntervalBytes) {
         offsetIndex.append(largestOffset, physicalPosition)
         timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestamp)

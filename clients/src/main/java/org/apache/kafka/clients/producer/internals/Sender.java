@@ -243,6 +243,7 @@ public class Sender implements Runnable {
         Cluster cluster = metadata.fetch();
 
         // get the list of partitions with data ready to send
+        // 获取可发送的分区所在的broker节点集合
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
@@ -250,6 +251,7 @@ public class Sender implements Runnable {
             // The set of topics with unknown leader contains topics with leader election pending as well as
             // topics which may have expired. Add the topic again to metadata to ensure it is included
             // and request metadata update, since there are messages to send to the topic.
+            // 有分区leader未知的topic，等待下次元数据更新
             for (String topic : result.unknownLeaderTopics)
                 this.metadata.add(topic);
 
@@ -259,6 +261,7 @@ public class Sender implements Runnable {
         }
 
         // remove any nodes we aren't ready to send to
+        // 移除网络通信异常的node
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
@@ -270,6 +273,7 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        // 按照broker id分组
         Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes,
                 this.maxRequestSize, now);
         if (guaranteeMessageOrder) {
@@ -674,6 +678,7 @@ public class Sender implements Runnable {
 
         for (ProducerBatch batch : batches) {
             TopicPartition tp = batch.topicPartition;
+            // 此时才构建MemoryRecords
             MemoryRecords records = batch.records();
 
             // down convert if necessary to the minimum magic used. In general, there can be a delay between the time

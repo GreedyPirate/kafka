@@ -1067,4 +1067,9 @@ class KafkaZkClientTest extends ZooKeeperTestHarness {
 
     assertEquals(expectedConsumerGroupOffsetsPath, actualConsumerGroupOffsetsPath)
   }
+
+  @Test
+  def testNodeChildren(): Unit = {
+    val topicSet = zkClient.getAllTopicsInCluster.toSet
+  }
 }

@@ -82,6 +82,8 @@ class ZooKeeperClient(connectString: String,
   }
 
   info(s"Initializing a new session to $connectString.")
+
+  // 创建Zookeeper连接
   // Fail-fast if there's an error during construction (so don't call initialize, which retries forever)
   @volatile private var zooKeeper = new ZooKeeper(connectString, sessionTimeoutMs, ZooKeeperClientWatcher)
 
@@ -137,11 +139,11 @@ class ZooKeeperClient(connectString: String,
       val responseQueue = new ArrayBlockingQueue[Req#Response](requests.size)
 
       requests.foreach { request =>
-        inFlightRequests.acquire()
+        inFlightRequests.acquire() // 信号量的使用，一个请求结束，下一个请求才能继续
         try {
           inReadLock(initializationLock) {
             send(request) { response =>
-              responseQueue.add(response)
+              responseQueue.add(response) // 保存结果
               inFlightRequests.release()
               countDownLatch.countDown()
             }
@@ -152,18 +154,20 @@ class ZooKeeperClient(connectString: String,
             throw e
         }
       }
-      countDownLatch.await()
-      responseQueue.asScala.toBuffer
+      countDownLatch.await() // 等待所有请求结束
+      responseQueue.asScala.toBuffer // 返回响应结果集合
     }
   }
 
   // Visibility to override for testing
   private[zookeeper] def send[Req <: AsyncRequest](request: Req)(processResponse: Req#Response => Unit): Unit = {
     // Safe to cast as we always create a response of the right type
+    // 由柯里化的第二个参数处理zk的Response
     def callback(response: AsyncResponse): Unit = processResponse(response.asInstanceOf[Req#Response])
 
+    // 记录请求耗时
     def responseMetadata(sendTimeMs: Long) = new ResponseMetadata(sendTimeMs, receivedTimeMs = time.hiResClockMs())
-
+    // 所有关于zk的请求
     val sendTimeMs = time.hiResClockMs()
     request match {
       case ExistsRequest(path, ctx) =>
@@ -448,7 +452,7 @@ sealed trait AsyncRequest {
   def path: String
   def ctx: Option[Any]
 }
-
+// chroot, data=null, acl=anyone, 节点类型： PERSISTENT
 case class CreateRequest(path: String, data: Array[Byte], acl: Seq[ACL], createMode: CreateMode,
                          ctx: Option[Any] = None) extends AsyncRequest {
   type Response = CreateResponse

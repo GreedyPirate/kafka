@@ -773,7 +773,9 @@ class ReplicaManager(val config: KafkaConfig,
           // 获取当前tp的leader Partition对象
           // TODO 有没有可能一个分区的leader，follower副本都在一台机器上，有可能的话这里还一定时leader副本吗
           val (partition, _) = getPartitionAndLeaderReplicaIfLocal(topicPartition)
+          // LogAppendInfo info是每个分区append之后的结果
           val info = partition.appendRecordsToLeader(records, isFromClient, requiredAcks)
+          // 仅用于监控
           val numAppendedMessages = info.numMessages
 
           // update stats for successfully appended bytes and messages as bytesInRate and messageInRate

@@ -287,11 +287,16 @@ public class MemoryRecords extends AbstractRecords {
         StringBuilder builder = new StringBuilder();
         builder.append('[');
 
+        int batchCounter = 0, recordCounter = 0;
+
         Iterator<MutableRecordBatch> batchIterator = batches.iterator();
         while (batchIterator.hasNext()) {
+            batchCounter++;
+
             RecordBatch batch = batchIterator.next();
             try (CloseableIterator<Record> recordsIterator = batch.streamingIterator(BufferSupplier.create())) {
                 while (recordsIterator.hasNext()) {
+                    recordCounter++;
                     Record record = recordsIterator.next();
                     appendRecordToStringBuilder(builder, record.toString());
                     if (recordsIterator.hasNext())
@@ -304,6 +309,7 @@ public class MemoryRecords extends AbstractRecords {
                 builder.append(", ");
         }
         builder.append(']');
+        builder.append(", batch count is ").append(batchCounter).append(", record count is ").append(recordCounter);
         return builder.toString();
     }
 

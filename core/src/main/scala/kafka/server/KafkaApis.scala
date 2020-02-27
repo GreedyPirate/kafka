@@ -383,6 +383,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleProduceRequest(request: RequestChannel.Request) {
     // 转换为具体的请求对象
     val produceRequest = request.body[ProduceRequest]
+//    info(s"produceRequest is : ${produceRequest}")
+
     val numBytesAppended = request.header.toStruct.sizeOf + request.sizeOfBodyInBytes
 
     if (produceRequest.isTransactional) {

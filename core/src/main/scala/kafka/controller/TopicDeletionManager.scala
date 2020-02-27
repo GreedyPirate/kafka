@@ -28,9 +28,15 @@ import scala.collection.{Set, mutable}
  * 2. The controller listens for child changes on /admin/delete_topic and starts topic deletion for the respective topics
  * 3. The controller's ControllerEventThread handles topic deletion. A topic will be ineligible
  *    for deletion in the following scenarios -
+  *    topic删除会在以下两种情况失败
+  *    1. topic的某个副本所在的broker宕机了
+  *    2. topic正在进行partition reassignment(分区重分配)
   *   3.1 broker hosting one of the replicas for that topic goes down
   *   3.2 partition reassignment for partitions of that topic is in progress
  * 4. Topic deletion is resumed when -
+  *   topic删除什么时候恢复呢
+  *   1. broker启动了
+  *   2. 分区重分配完成了
  *    4.1 broker hosting one of the replicas for that topic is started
  *    4.2 partition reassignment for partitions of that topic completes
  * 5. Every replica for a topic being deleted is in either of the 3 states -
@@ -48,6 +54,7 @@ import scala.collection.{Set, mutable}
  *        broker fails before the request is sent and after the replica is in TopicDeletionStarted state,
  *        it is possible that the replica will mistakenly remain in TopicDeletionStarted state and topic deletion
  *        will not be retried when the broker comes back up.
+ *   topic要在所有副本都删除成功才会被标记为已删除
  * 6. A topic is marked successfully deleted only if all replicas are in TopicDeletionSuccessful
  *    state. Topic deletion teardown mode deletes all topic state from the controllerContext
  *    as well as from zookeeper. This is the only time the /brokers/topics/<topic> path gets deleted. On the other hand,
@@ -66,6 +73,7 @@ class TopicDeletionManager(controller: KafkaController,
   val topicsIneligibleForDeletion = mutable.Set.empty[String]
 
   def init(initialTopicsToBeDeleted: Set[String], initialTopicsIneligibleForDeletion: Set[String]): Unit = {
+    // 如果delete.topic.enable为true
     if (isDeleteTopicEnabled) {
       topicsToBeDeleted ++= initialTopicsToBeDeleted
       partitionsToBeDeleted ++= topicsToBeDeleted.flatMap(controllerContext.partitionsForTopic)

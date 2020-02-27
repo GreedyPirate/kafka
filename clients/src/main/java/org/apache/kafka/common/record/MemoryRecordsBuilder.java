@@ -20,6 +20,8 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.utils.ByteBufferOutputStream;
+import org.apache.kafka.common.utils.LogContext;
+import org.slf4j.Logger;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -82,6 +84,9 @@ public class MemoryRecordsBuilder {
     private MemoryRecords builtRecords;
     private boolean aborted = false;
 
+    // FIXME 自用
+    private final Logger logger = new LogContext("self debug ").logger(MemoryRecordsBuilder.class);
+
     public MemoryRecordsBuilder(ByteBufferOutputStream bufferStream,
                                 byte magic,
                                 CompressionType compressionType,
@@ -95,8 +100,10 @@ public class MemoryRecordsBuilder {
                                 boolean isControlBatch,
                                 int partitionLeaderEpoch,
                                 int writeLimit) {
+        // v0协议之后必须有timestamp
         if (magic > RecordBatch.MAGIC_VALUE_V0 && timestampType == TimestampType.NO_TIMESTAMP_TYPE)
             throw new IllegalArgumentException("TimestampType must be set for magic >= 0");
+        // v2协议之前不支持事务
         if (magic < RecordBatch.MAGIC_VALUE_V2) {
             if (isTransactional)
                 throw new IllegalArgumentException("Transactional records are not supported for magic " + magic);
@@ -161,6 +168,7 @@ public class MemoryRecordsBuilder {
                                 boolean isControlBatch,
                                 int partitionLeaderEpoch,
                                 int writeLimit) {
+        // ByteBufferOutputStream用于往OutputStream写入ByteBuffer
         this(new ByteBufferOutputStream(buffer), magic, compressionType, timestampType, baseOffset, logAppendTime,
                 producerId, producerEpoch, baseSequence, isTransactional, isControlBatch, partitionLeaderEpoch,
                 writeLimit);
@@ -526,6 +534,7 @@ public class MemoryRecordsBuilder {
      * @return CRC of the record or null if record-level CRC is not supported for the message format
      */
     public Long append(long timestamp, byte[] key, byte[] value, Header[] headers) {
+        // key value已用ByteBuffer包装
         return append(timestamp, wrapNullable(key), wrapNullable(value), headers);
     }
 
@@ -621,11 +630,21 @@ public class MemoryRecordsBuilder {
         appendWithOffset(nextSequentialOffset(), record);
     }
 
+    /**
+     *
+     * @param offset lastOffset ?
+     * @param timestamp
+     * @param key
+     * @param value
+     * @param headers
+     * @throws IOException
+     */
     private void appendDefaultRecord(long offset, long timestamp, ByteBuffer key, ByteBuffer value,
                                      Header[] headers) throws IOException {
         ensureOpenForRecordAppend();
         int offsetDelta = (int) (offset - baseOffset);
         long timestampDelta = timestamp - firstTimestamp;
+        // 写入消息到
         int sizeInBytes = DefaultRecord.writeTo(appendStream, offsetDelta, timestampDelta, key, value, headers);
         recordWritten(offset, timestamp, sizeInBytes);
     }
@@ -761,6 +780,7 @@ public class MemoryRecordsBuilder {
     }
 
     private long nextSequentialOffset() {
+        logger.info("debug ===== baseOffset: {}, lastOffset: {}");
         return lastOffset == null ? baseOffset : lastOffset + 1;
     }
 

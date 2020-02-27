@@ -72,6 +72,7 @@ object Kafka extends Logging {
         override def run(): Unit = kafkaServerStartable.shutdown()
       })
 
+      // 用一个CountDownLatch来控制启动和停止。启动时初始化latch，异常处latch-1，这里await
       kafkaServerStartable.startup()
       kafkaServerStartable.awaitShutdown()
     }
