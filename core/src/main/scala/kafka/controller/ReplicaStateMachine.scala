@@ -61,6 +61,8 @@ class ReplicaStateMachine(config: KafkaConfig,
    */
   def startup() {
     info("Initializing replica state")
+    // 这一步简单却很重要，初始replicaState，它保存了每个副本的状态
+    // 为之后handleStateChanges转变为OnlineReplica做准备
     initializeReplicaState()
     info("Triggering online replica state changes")
     handleStateChanges(controllerContext.allLiveReplicas().toSeq, OnlineReplica)
@@ -78,6 +80,7 @@ class ReplicaStateMachine(config: KafkaConfig,
   /**
    * Invoked on startup of the replica's state machine to set the initial state for replicas of all existing partitions
    * in zookeeper
+    * 初始化每个副本的状态，这里主要分为OnlineReplica和ReplicaDeletionIneligible
    */
   private def initializeReplicaState() {
     controllerContext.allPartitions.foreach { partition =>
@@ -100,10 +103,12 @@ class ReplicaStateMachine(config: KafkaConfig,
     if (replicas.nonEmpty) {
       try {
         controllerBrokerRequestBatch.newBatch()
+        // 按照replica id分组，从这里看不出来为什么要按照replica id分组
         replicas.groupBy(_.replica).map { case (replicaId, replicas) =>
           val partitions = replicas.map(_.topicPartition)
           doHandleStateChanges(replicaId, partitions, targetState, callbacks)
         }
+        // 发送ControllerChannelManager中积攒的请求
         controllerBrokerRequestBatch.sendRequestsToBrokers(controllerContext.epoch)
       } catch {
         case e: Throwable => error(s"Error while moving some replicas to $targetState state", e)
@@ -112,6 +117,7 @@ class ReplicaStateMachine(config: KafkaConfig,
   }
 
   /**
+    * 这应该是一个处理replica状态变化的方法，里面对状态变化的起始状态和结束状态有限定
    * This API exercises the replica's state machine. It ensures that every state transition happens from a legal
    * previous state to the target state. Valid state transitions are:
    * NonExistentReplica --> NewReplica
@@ -148,10 +154,19 @@ class ReplicaStateMachine(config: KafkaConfig,
    */
   private def doHandleStateChanges(replicaId: Int, partitions: Seq[TopicPartition], targetState: ReplicaState,
                                    callbacks: Callbacks): Unit = {
+    // 这里又组成了Seq[PartitionAndReplica]
     val replicas = partitions.map(partition => PartitionAndReplica(partition, replicaId))
+    // replicaState是副本状态缓存
+    // 查看该副本的状态，不存在Update为NonExistentReplica
     replicas.foreach(replica => replicaState.getOrElseUpdate(replica, NonExistentReplica))
+    // 状态转换的合法性校验，比如NewReplica的上一个状态只能是NonExistentReplica
+    // partition和java stream里的partition是一个意思，这里按照isValidTransition返回的true、false分组
+    // validReplicas是转换合法的副本，invalidReplicas是非合法的
     val (validReplicas, invalidReplicas) = replicas.partition(replica => isValidTransition(replica, targetState))
+    // 不合法主要用日志记录异常
     invalidReplicas.foreach(replica => logInvalidTransition(replica, targetState))
+    // 初始化Controller时，targetState=OnlineReplica
+    //validReplicas==>Seq[PartitionAndReplica]
     targetState match {
       case NewReplica =>
         validReplicas.foreach { replica =>
@@ -175,18 +190,20 @@ class ReplicaStateMachine(config: KafkaConfig,
               replicaState.put(replica, NewReplica)
           }
         }
-      case OnlineReplica =>
+      case OnlineReplica => // previousState: NewReplica, OnlineReplica, OfflineReplica, ReplicaDeletionIneligible
         validReplicas.foreach { replica =>
           val partition = replica.topicPartition
-          replicaState(replica) match {
+          replicaState(replica) match { // 这里获取的是分区->副本的状态
             case NewReplica =>
-              val assignment = controllerContext.partitionReplicaAssignment(partition)
+              // NewReplica仅仅是检查了缓存是否存在，然后不存在则更新了下缓存
+              val assignment = controllerContext.partitionReplicaAssignment(partition) // 从缓存中获取分区对应的副本集合
               if (!assignment.contains(replicaId)) {
-                controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId)
+                controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId) // 感觉用PartitionAndReplica.replica
               }
             case _ =>
               controllerContext.partitionLeadershipInfo.get(partition) match {
                 case Some(leaderIsrAndControllerEpoch) =>
+                  // 发送LeaderAndIsr请求(放入等待队列)
                   controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                     replica.topicPartition,
                     leaderIsrAndControllerEpoch,

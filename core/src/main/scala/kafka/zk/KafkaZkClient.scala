@@ -1519,6 +1519,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
         }
 
         if (remainingRequests.nonEmpty)
+          // 无限等待直到zk达到CONNECTED状态，或者在AUTH_FAILED/CLOSED状态下抛出异常
           zooKeeperClient.waitUntilConnected()
       } else {
         // 否则就是正常处理，返回结果

@@ -40,6 +40,7 @@ class ControllerContext {
   val partitionLeadershipInfo: mutable.Map[TopicPartition, LeaderIsrAndControllerEpoch] = mutable.Map.empty
 
   val partitionsBeingReassigned: mutable.Map[TopicPartition, ReassignedPartitionsContext] = mutable.Map.empty
+  // 这要等到向Controller发送LeaderAndIsr请求之后，才能初始化，key是brokerId
   val replicasOnOfflineDirs: mutable.Map[Int, Set[TopicPartition]] = mutable.Map.empty
 
   private var liveBrokersUnderlying: Set[Broker] = Set.empty

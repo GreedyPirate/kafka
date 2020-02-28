@@ -103,6 +103,7 @@ class PartitionStateMachine(config: KafkaConfig,
       !topicDeletionManager.isTopicQueuedUpForDeletion(partition.topic) &&
         (partitionState.equals(OfflinePartition) || partitionState.equals(NewPartition))
     }.keys.toSeq
+    // 把所有OfflinePartition，NewPartition和非准备删除的分区 转换为OnlinePartition
     handleStateChanges(partitionsToTrigger, OnlinePartition, Option(OfflinePartitionLeaderElectionStrategy))
     // TODO: If handleStateChanges catches an exception, it is not enough to bail out and log an error.
     // It is important to trigger leader election for those partitions.
@@ -149,6 +150,7 @@ class PartitionStateMachine(config: KafkaConfig,
    */
   private def doHandleStateChanges(partitions: Seq[TopicPartition], targetState: PartitionState,
                            partitionLeaderElectionStrategyOpt: Option[PartitionLeaderElectionStrategy]): Unit = {
+    // 这里的处理和副本状态机一样
     val stateChangeLog = stateChangeLogger.withControllerEpoch(controllerContext.epoch)
     partitions.foreach(partition => partitionState.getOrElseUpdate(partition, NonExistentPartition))
     val (validPartitions, invalidPartitions) = partitions.partition(partition => isValidTransition(partition, targetState))

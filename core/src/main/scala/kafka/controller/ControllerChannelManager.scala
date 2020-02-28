@@ -358,14 +358,18 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
   def addUpdateMetadataRequestForBrokers(brokerIds: Seq[Int],
                                          partitions: collection.Set[TopicPartition]) {
 
+    /**
+      * @param partition 分区
+      * @param beingDeleted 是否将要删除
+      */
     def updateMetadataRequestPartitionInfo(partition: TopicPartition, beingDeleted: Boolean) {
       val leaderIsrAndControllerEpochOpt = controllerContext.partitionLeadershipInfo.get(partition)
       leaderIsrAndControllerEpochOpt match {
         case Some(l @ LeaderIsrAndControllerEpoch(leaderAndIsr, controllerEpoch)) =>
-          val replicas = controllerContext.partitionReplicaAssignment(partition)
-          val offlineReplicas = replicas.filter(!controllerContext.isReplicaOnline(_, partition))
+          val replicas = controllerContext.partitionReplicaAssignment(partition) // 分区所有的副本
+          val offlineReplicas = replicas.filter(!controllerContext.isReplicaOnline(_, partition)) // 离线的副本
           val leaderIsrAndControllerEpoch = if (beingDeleted) {
-            val leaderDuringDelete = LeaderAndIsr.duringDelete(leaderAndIsr.isr)
+            val leaderDuringDelete = LeaderAndIsr.duringDelete(leaderAndIsr.isr) // 标记为正在删除的LeaderAndIsr对象
             LeaderIsrAndControllerEpoch(leaderDuringDelete, controllerEpoch)
           } else {
             l
@@ -378,6 +382,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
             leaderIsrAndControllerEpoch.leaderAndIsr.zkVersion,
             replicas.map(Integer.valueOf).asJava,
             offlineReplicas.map(Integer.valueOf).asJava)
+          // 放进map里等待发送请求
           updateMetadataRequestPartitionInfoMap.put(partition, partitionStateInfo)
 
         case None =>
@@ -385,14 +390,16 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
       }
     }
 
+    // 如果参数为空，返回缓存中所有的TP
     val givenPartitions = if (partitions.isEmpty)
       controllerContext.partitionLeadershipInfo.keySet
     else
       partitions
 
     updateMetadataRequestBrokerSet ++= brokerIds.filter(_ >= 0)
-    givenPartitions.foreach(partition => updateMetadataRequestPartitionInfo(partition,
-      beingDeleted = controller.topicDeletionManager.partitionsToBeDeleted.contains(partition)))
+    givenPartitions.foreach(partition =>
+      updateMetadataRequestPartitionInfo(partition, beingDeleted = controller.topicDeletionManager.partitionsToBeDeleted.contains(partition))
+    )
   }
 
   def sendRequestsToBrokers(controllerEpoch: Int) {
