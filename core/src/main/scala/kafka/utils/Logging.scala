@@ -29,7 +29,6 @@ object Log4jControllerRegistration {
     val instance = log4jController.getDeclaredConstructor().newInstance()
     CoreUtils.registerMBean(instance, "kafka:type=kafka.Log4jController")
 
-//    val url = Thread.currentThread().getContextClassLoader().getResource("log4j.properties")
     logger.info("Registered kafka:type=kafka.Log4jController MBean")
   } catch {
     case _: Exception => logger.info("Couldn't register kafka:type=kafka.Log4jController MBean")

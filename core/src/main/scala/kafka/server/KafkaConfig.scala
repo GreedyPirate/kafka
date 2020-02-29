@@ -1036,14 +1036,19 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
 
   override def originals: util.Map[String, AnyRef] =
     if (this eq currentConfig) super.originals else currentConfig.originals
+
   override def values: util.Map[String, _] =
     if (this eq currentConfig) super.values else currentConfig.values
+
   override def originalsStrings: util.Map[String, String] =
     if (this eq currentConfig) super.originalsStrings else currentConfig.originalsStrings
+
   override def originalsWithPrefix(prefix: String): util.Map[String, AnyRef] =
     if (this eq currentConfig) super.originalsWithPrefix(prefix) else currentConfig.originalsWithPrefix(prefix)
+
   override def valuesWithPrefixOverride(prefix: String): util.Map[String, AnyRef] =
     if (this eq currentConfig) super.valuesWithPrefixOverride(prefix) else currentConfig.valuesWithPrefixOverride(prefix)
+
   override def get(key: String): AnyRef =
     if (this eq currentConfig) super.get(key) else currentConfig.get(key)
 

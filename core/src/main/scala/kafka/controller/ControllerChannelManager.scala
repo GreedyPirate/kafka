@@ -299,6 +299,8 @@ class RequestSendThread(val controllerId: Int,
 class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogger: StateChangeLogger) extends  Logging {
   val controllerContext = controller.controllerContext
   val controllerId: Int = controller.config.brokerId
+  // Map[Int, Map[TopicPartition, LeaderAndIsrRequest.PartitionState]]
+  // 这里的Int是brokerId
   val leaderAndIsrRequestMap = mutable.Map.empty[Int, mutable.Map[TopicPartition, LeaderAndIsrRequest.PartitionState]]
   val stopReplicaRequestMap = mutable.Map.empty[Int, Seq[StopReplicaRequestInfo]]
   val updateMetadataRequestBrokerSet = mutable.Set.empty[Int]
@@ -332,6 +334,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
     brokerIds.filter(_ >= 0).foreach { brokerId =>
       val result = leaderAndIsrRequestMap.getOrElseUpdate(brokerId, mutable.Map.empty)
       val alreadyNew = result.get(topicPartition).exists(_.isNew)
+      // 添加到目标broker的 leaderAndIsr请求队列中
       result.put(topicPartition, new LeaderAndIsrRequest.PartitionState(leaderIsrAndControllerEpoch.controllerEpoch,
         leaderIsrAndControllerEpoch.leaderAndIsr.leader,
         leaderIsrAndControllerEpoch.leaderAndIsr.leaderEpoch,
@@ -390,7 +393,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
       }
     }
 
-    // 如果参数为空，返回缓存中所有的TP
+    // 如果参数为空，givenPartitions=缓存中所有的TP
     val givenPartitions = if (partitions.isEmpty)
       controllerContext.partitionLeadershipInfo.keySet
     else

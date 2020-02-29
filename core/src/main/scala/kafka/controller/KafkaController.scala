@@ -589,6 +589,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
    */
   private def maybeTriggerPartitionReassignment(topicPartitions: Set[TopicPartition]) {
     val partitionsToBeRemovedFromReassignment = scala.collection.mutable.Set.empty[TopicPartition]
+
     topicPartitions.foreach { tp =>
       if (topicDeletionManager.isTopicQueuedUpForDeletion(tp.topic)) {
         error(s"Skipping reassignment of $tp since the topic is currently being deleted")

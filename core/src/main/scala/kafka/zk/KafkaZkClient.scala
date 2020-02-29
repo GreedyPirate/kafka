@@ -97,6 +97,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
 
   /**
    * Gets topic partition states for the given partitions.
+    * 批量获取分区 state节点数据
    * @param partitions the partitions for which we want ot get states.
    * @return sequence of GetDataResponses whose contexts are the partitions they are associated with.
    */
@@ -134,6 +135,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
       val data = TopicPartitionStateZNode.encode(leaderIsrAndControllerEpoch)
       CreateRequest(path, data, acls(path), CreateMode.PERSISTENT, Some(partition))
     }
+    // 不处理结果？
     retryRequestsUntilConnected(createRequests.toSeq)
   }
 
@@ -204,6 +206,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   (Map[String, LogConfig], Map[String, Exception]) = {
     val logConfigs = mutable.Map.empty[String, LogConfig]
     val failed = mutable.Map.empty[String, Exception]
+    // 获取 /config/topics/xxx 下topic的配置
     val configResponses = try {
       getTopicConfigs(topics)
     } catch {
@@ -216,6 +219,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
       configResponse.resultCode match {
         case Code.OK =>
           val overrides = ConfigEntityZNode.decode(configResponse.data)
+          // overrides是zk里topic的自定义配置，config是默认的topic配置
           val logConfig = LogConfig.fromProps(config, overrides)
           logConfigs.put(topic, logConfig)
         case Code.NONODE =>

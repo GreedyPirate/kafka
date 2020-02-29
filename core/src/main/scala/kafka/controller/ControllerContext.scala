@@ -104,10 +104,12 @@ class ControllerContext {
   }
 
   def isReplicaOnline(brokerId: Int, topicPartition: TopicPartition, includeShuttingDownBrokers: Boolean = false): Boolean = {
+    // brokerId其实也是replica的id，这里liveBrokerIds包含brokerid，说明副本所在的broker还活着
     val brokerOnline = {
       if (includeShuttingDownBrokers) liveOrShuttingDownBrokerIds.contains(brokerId)
       else liveBrokerIds.contains(brokerId)
     }
+    // broker 一定是在线的，replicasOnOfflineDirs正常情况下初始化就是空的
     brokerOnline && !replicasOnOfflineDirs.getOrElse(brokerId, Set.empty).contains(topicPartition)
   }
 

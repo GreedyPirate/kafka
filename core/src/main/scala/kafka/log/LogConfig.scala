@@ -288,6 +288,7 @@ object LogConfig {
     val props = new Properties()
     defaults.asScala.foreach { case (k, v) => props.put(k, v) }
     props ++= overrides
+    // overrides的key集合
     val overriddenKeys = overrides.keySet.asScala.map(_.asInstanceOf[String]).toSet
     new LogConfig(props, overriddenKeys)
   }

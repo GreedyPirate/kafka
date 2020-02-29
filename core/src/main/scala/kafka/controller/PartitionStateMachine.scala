@@ -57,6 +57,7 @@ class PartitionStateMachine(config: KafkaConfig,
    */
   def startup() {
     info("Initializing partition state")
+    // 初始化分区的state
     initializePartitionState()
     info("Triggering online partition state changes")
     triggerOnlinePartitionStateChange()
@@ -99,6 +100,7 @@ class PartitionStateMachine(config: KafkaConfig,
   def triggerOnlinePartitionStateChange() {
     // try to move all partitions in NewPartition or OfflinePartition state to OnlinePartition state except partitions
     // that belong to topics to be deleted
+    // 正常情况下partitionsToTrigger为空的，启动kafka时所有分区都是OnlinePartition
     val partitionsToTrigger = partitionState.filter { case (partition, partitionState) =>
       !topicDeletionManager.isTopicQueuedUpForDeletion(partition.topic) &&
         (partitionState.equals(OfflinePartition) || partitionState.equals(NewPartition))
@@ -115,6 +117,7 @@ class PartitionStateMachine(config: KafkaConfig,
       try {
         controllerBrokerRequestBatch.newBatch()
         doHandleStateChanges(partitions, targetState, partitionLeaderElectionStrategyOpt)
+        // 发送一次请求队列，包括了doHandleStateChanges里新增的请求
         controllerBrokerRequestBatch.sendRequestsToBrokers(controllerContext.epoch)
       } catch {
         case e: Throwable => error(s"Error while moving some partitions to $targetState state", e)
@@ -163,9 +166,12 @@ class PartitionStateMachine(config: KafkaConfig,
           partitionState.put(partition, NewPartition)
         }
       case OnlinePartition =>
-        val uninitializedPartitions = validPartitions.filter(partition => partitionState(partition) == NewPartition)
+
+        val uninitializedPartitions = validPartitions.filter(partition => partitionState(partition) == NewPartition) // 类型：Seq[TopicPartition]
         val partitionsToElectLeader = validPartitions.filter(partition => partitionState(partition) == OfflinePartition || partitionState(partition) == OnlinePartition)
+        // 状态为NewPartition的分区处理
         if (uninitializedPartitions.nonEmpty) {
+          // 初始化新分区的leader
           val successfulInitializations = initializeLeaderAndIsrForPartitions(uninitializedPartitions)
           successfulInitializations.foreach { partition =>
             stateChangeLog.trace(s"Changed partition $partition from ${partitionState(partition)} to $targetState with state " +
@@ -173,11 +179,14 @@ class PartitionStateMachine(config: KafkaConfig,
             partitionState.put(partition, OnlinePartition)
           }
         }
+        // OfflinePartition,OnlinePartition副本中开始选举
         if (partitionsToElectLeader.nonEmpty) {
+          // 根据选举策略(Strategy)选举leader副本
           val successfulElections = electLeaderForPartitions(partitionsToElectLeader, partitionLeaderElectionStrategyOpt.get)
           successfulElections.foreach { partition =>
             stateChangeLog.trace(s"Changed partition $partition from ${partitionState(partition)} to $targetState with state " +
               s"${controllerContext.partitionLeadershipInfo(partition).leaderAndIsr}")
+            // 更新分区状态为OnlinePartition
             partitionState.put(partition, OnlinePartition)
           }
         }
@@ -195,19 +204,23 @@ class PartitionStateMachine(config: KafkaConfig,
   }
 
   /**
+    * 新分区(NewPartition)都要做什么操作，都在这个方法里
    * Initialize leader and isr partition state in zookeeper.
    * @param partitions The partitions  that we're trying to initialize.
    * @return The partitions that have been successfully initialized.
    */
   private def initializeLeaderAndIsrForPartitions(partitions: Seq[TopicPartition]): Seq[TopicPartition] = {
     val successfulInitializations = mutable.Buffer.empty[TopicPartition]
+    // 获取分区副本
     val replicasPerPartition = partitions.map(partition => partition -> controllerContext.partitionReplicaAssignment(partition))
+    // 只要在线的副本
     val liveReplicasPerPartition = replicasPerPartition.map { case (partition, replicas) =>
         val liveReplicasForPartition = replicas.filter(replica => controllerContext.isReplicaOnline(replica, partition))
         partition -> liveReplicasForPartition
     }
+    // 分区按照是否有在线的副本
     val (partitionsWithoutLiveReplicas, partitionsWithLiveReplicas) = liveReplicasPerPartition.partition { case (_, liveReplicas) => liveReplicas.isEmpty }
-
+    // 没有在线副本的分区处理：打日志
     partitionsWithoutLiveReplicas.foreach { case (partition, replicas) =>
       val failMsg = s"Controller $controllerId epoch ${controllerContext.epoch} encountered error during state change of " +
         s"partition $partition from New to Online, assigned replicas are " +
@@ -215,12 +228,16 @@ class PartitionStateMachine(config: KafkaConfig,
         "replica is alive."
       logFailedStateChange(partition, NewPartition, OnlinePartition, new StateChangeFailedException(failMsg))
     }
+    // 有在线副本的分区，将在线副本的第一个leader副本，并初始化ISR列表
+    // Map[TopicPartition, LeaderIsrAndControllerEpoch]
     val leaderIsrAndControllerEpochs = partitionsWithLiveReplicas.map { case (partition, liveReplicas) =>
+      // 这里就在初始化分区的leader(在线副本的第一个)，ISR
       val leaderAndIsr = LeaderAndIsr(liveReplicas.head, liveReplicas.toList)
-      val leaderIsrAndControllerEpoch = LeaderIsrAndControllerEpoch(leaderAndIsr, controllerContext.epoch)
+      val leaderIsrAndControllerEpoch = LeaderIsrAndControllerEpoch(leaderAndIsr, controllerContext.epoch) // 加上Controller epoch
       partition -> leaderIsrAndControllerEpoch
     }.toMap
     val createResponses = try {
+      // 创建 /topics/topic名称/partitions/分区名称/sate，包含中间节点
       zkClient.createTopicPartitionStatesRaw(leaderIsrAndControllerEpochs)
     } catch {
       case e: Exception =>
@@ -232,9 +249,13 @@ class PartitionStateMachine(config: KafkaConfig,
       val partition = createResponse.ctx.get.asInstanceOf[TopicPartition]
       val leaderIsrAndControllerEpoch = leaderIsrAndControllerEpochs(partition)
       if (code == Code.OK) {
+        // 缓存起来分区的leader和ISR数据
         controllerContext.partitionLeadershipInfo.put(partition, leaderIsrAndControllerEpoch)
+
+        // isr是在线副本所在的brokerId，这里向这些broker发送LeaderAndIsr请求
         controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(leaderIsrAndControllerEpoch.leaderAndIsr.isr,
           partition, leaderIsrAndControllerEpoch, controllerContext.partitionReplicaAssignment(partition), isNew = true)
+        // 作为成功初始化的分区返回
         successfulInitializations += partition
       } else {
         logFailedStateChange(partition, NewPartition, OnlinePartition, code)
@@ -264,12 +285,13 @@ class PartitionStateMachine(config: KafkaConfig,
   }
 
   /**
+    * 为每个分区选举leader副本，然后更新到zk里
    * Try to elect leaders for multiple partitions.
    * Electing a leader for a partition updates partition state in zookeeper.
    *
    * @param partitions The partitions that we're trying to elect leaders for.
    * @param partitionLeaderElectionStrategy The election strategy to use.
-   * @return A tuple of three values:
+   * @return A tuple of three values: 返回的是一个三元组
    *         1. The partitions that successfully had a leader elected.
    *         2. The partitions that we should retry due to a zookeeper BADVERSION conflict. Version conflicts can occur if
    *         the partition leader updated partition state while the controller attempted to update partition state.
@@ -277,6 +299,8 @@ class PartitionStateMachine(config: KafkaConfig,
    */
   private def doElectLeaderForPartitions(partitions: Seq[TopicPartition], partitionLeaderElectionStrategy: PartitionLeaderElectionStrategy):
   (Seq[TopicPartition], Seq[TopicPartition], Map[TopicPartition, Exception]) = {
+    // 先批量获取zk中.../partitions/xxx/state，即每个分区的state 数据
+    // 样例： {"controller_epoch":19,"leader":0,"version":1,"leader_epoch":57,"isr":[0,1,2]}
     val getDataResponses = try {
       zkClient.getTopicPartitionStatesRaw(partitions)
     } catch {
@@ -285,23 +309,33 @@ class PartitionStateMachine(config: KafkaConfig,
     }
     val failedElections = mutable.Map.empty[TopicPartition, Exception]
     val leaderIsrAndControllerEpochPerPartition = mutable.Buffer.empty[(TopicPartition, LeaderIsrAndControllerEpoch)]
+
+    // 主要是初始化leaderIsrAndControllerEpochPerPartition
     getDataResponses.foreach { getDataResponse =>
+      // context 就是请求参数里的分区
       val partition = getDataResponse.ctx.get.asInstanceOf[TopicPartition]
-      val currState = partitionState(partition)
+      val currState = partitionState(partition) // 获取缓存中该分区的状态
+
       if (getDataResponse.resultCode == Code.OK) {
+        // 解析成LeaderIsrAndControllerEpoch
         val leaderIsrAndControllerEpochOpt = TopicPartitionStateZNode.decode(getDataResponse.data, getDataResponse.stat)
+        // 没获取到leaderIsrAndControllerEpoch，添加到failedElections集合里
         if (leaderIsrAndControllerEpochOpt.isEmpty) {
           val exception = new StateChangeFailedException(s"LeaderAndIsr information doesn't exist for partition $partition in $currState state")
           failedElections.put(partition, exception)
         }
-        leaderIsrAndControllerEpochPerPartition += partition -> leaderIsrAndControllerEpochOpt.get
+        leaderIsrAndControllerEpochPerPartition += partition -> leaderIsrAndControllerEpochOpt.get // 加个括号好看些 (partition -> leaderIsrAndControllerEpochOpt.get)
       } else if (getDataResponse.resultCode == Code.NONODE) {
+        // 节点不存在
         val exception = new StateChangeFailedException(s"LeaderAndIsr information doesn't exist for partition $partition in $currState state")
         failedElections.put(partition, exception)
       } else {
+        // 其他zk异常
         failedElections.put(partition, getDataResponse.resultException.get)
       }
     }
+
+    // zk里的controllerEpoch是否比 本地缓存里的controllerEpoch大，大就说明有其他Controller已经被选举了，写到了zk的partition/state里
     val (invalidPartitionsForElection, validPartitionsForElection) = leaderIsrAndControllerEpochPerPartition.partition { case (_, leaderIsrAndControllerEpoch) =>
       leaderIsrAndControllerEpoch.controllerEpoch > controllerContext.epoch
     }
@@ -311,12 +345,16 @@ class PartitionStateMachine(config: KafkaConfig,
         s"a soft failure and another controller was elected with epoch ${leaderIsrAndControllerEpoch.controllerEpoch}."
       failedElections.put(partition, new StateChangeFailedException(failMsg))
     }
+    // 全部分区都被新Controller更新了state，直接返回failedElections
     if (validPartitionsForElection.isEmpty) {
       return (Seq.empty, Seq.empty, failedElections.toMap)
     }
+
     val shuttingDownBrokers  = controllerContext.shuttingDownBrokerIds.toSet
+
     val (partitionsWithoutLeaders, partitionsWithLeaders) = partitionLeaderElectionStrategy match {
-      case OfflinePartitionLeaderElectionStrategy =>
+      case OfflinePartitionLeaderElectionStrategy => // 初始化是用的是OfflinePartitionLeaderElectionStrategy(追参数传递)
+        // 注意这里的scala语法，partition是布尔分组器，并返回结果给外边的val变量
         leaderForOffline(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
       case ReassignPartitionLeaderElectionStrategy =>
         leaderForReassign(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
@@ -343,23 +381,40 @@ class PartitionStateMachine(config: KafkaConfig,
     (successfulUpdates.keys.toSeq, updatesToRetry, failedElections.toMap ++ failedUpdates)
   }
 
+  /**
+    * OfflinePartitionLeaderElectionStrategy策略选举partition leader
+    * @param leaderIsrAndControllerEpochs 每个分区的LeaderIsrAndControllerEpoch
+    * @return
+    */
   private def leaderForOffline(leaderIsrAndControllerEpochs: Seq[(TopicPartition, LeaderIsrAndControllerEpoch)]):
   Seq[(TopicPartition, Option[LeaderAndIsr], Seq[Int])] = {
+    // 又是布尔分区器
     val (partitionsWithNoLiveInSyncReplicas, partitionsWithLiveInSyncReplicas) = leaderIsrAndControllerEpochs.partition { case (partition, leaderIsrAndControllerEpoch) =>
+      // 这是在查看zk中的ISR列表，broker本地缓存中是否存活
       val liveInSyncReplicas = leaderIsrAndControllerEpoch.leaderAndIsr.isr.filter(replica => controllerContext.isReplicaOnline(replica, partition))
       liveInSyncReplicas.isEmpty
     }
+
+    // partitionsWithNoLiveInSyncReplicas的含义：partition.isr.filter(replica => controllerContext.isReplicaOnline(replica, partition)).isEmpty
+    // config.originals()就是server.properties里的配置
+    // 获取topic的LogConfig配置对象，LogConfig(originals+overrides, overrides.keys)
     val (logConfigs, failed) = zkClient.getLogConfigs(partitionsWithNoLiveInSyncReplicas.map { case (partition, _) => partition.topic }, config.originals())
+
     val partitionsWithUncleanLeaderElectionState = partitionsWithNoLiveInSyncReplicas.map { case (partition, leaderIsrAndControllerEpoch) =>
+      // failed: 从zk获取配置信息失败的topic
       if (failed.contains(partition.topic)) {
+        // 打日志
         logFailedStateChange(partition, partitionState(partition), OnlinePartition, failed(partition.topic))
         (partition, None, false)
       } else {
+        // 返回的是一个三元组(TopicPartition, Option(LeaderIsrAndControllerEpoch, 该topic"unclean.leader.election.enable"的配置),
         (partition, Option(leaderIsrAndControllerEpoch), logConfigs(partition.topic).uncleanLeaderElectionEnable.booleanValue())
       }
     } ++ partitionsWithLiveInSyncReplicas.map { case (partition, leaderIsrAndControllerEpoch) => (partition, Option(leaderIsrAndControllerEpoch), false) }
     partitionsWithUncleanLeaderElectionState.map { case (partition, leaderIsrAndControllerEpochOpt, uncleanLeaderElectionEnabled) =>
+      // 获取副本集合
       val assignment = controllerContext.partitionReplicaAssignment(partition)
+      // 再检查本地缓存里的副本是否在线
       val liveReplicas = assignment.filter(replica => controllerContext.isReplicaOnline(replica, partition))
       if (leaderIsrAndControllerEpochOpt.nonEmpty) {
         val leaderIsrAndControllerEpoch = leaderIsrAndControllerEpochOpt.get
@@ -474,21 +529,25 @@ sealed trait PartitionState {
   def validPreviousStates: Set[PartitionState]
 }
 
+// 刚创建，还没有leaderAndIsr
 case object NewPartition extends PartitionState {
   val state: Byte = 0
   val validPreviousStates: Set[PartitionState] = Set(NonExistentPartition)
 }
 
+// 有leaderAndIsr的分区
 case object OnlinePartition extends PartitionState {
   val state: Byte = 1
   val validPreviousStates: Set[PartitionState] = Set(NewPartition, OnlinePartition, OfflinePartition)
 }
 
+// 有leaderAndIsr的分区，但是broker宕机
 case object OfflinePartition extends PartitionState {
   val state: Byte = 2
   val validPreviousStates: Set[PartitionState] = Set(NewPartition, OnlinePartition, OfflinePartition)
 }
 
+// 不存在(已被删除或者从来没创建过)
 case object NonExistentPartition extends PartitionState {
   val state: Byte = 3
   val validPreviousStates: Set[PartitionState] = Set(OfflinePartition)
