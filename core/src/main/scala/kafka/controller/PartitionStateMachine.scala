@@ -166,7 +166,6 @@ class PartitionStateMachine(config: KafkaConfig,
           partitionState.put(partition, NewPartition)
         }
       case OnlinePartition =>
-
         val uninitializedPartitions = validPartitions.filter(partition => partitionState(partition) == NewPartition) // 类型：Seq[TopicPartition]
         val partitionsToElectLeader = validPartitions.filter(partition => partitionState(partition) == OfflinePartition || partitionState(partition) == OnlinePartition)
         // 状态为NewPartition的分区处理
@@ -356,35 +355,46 @@ class PartitionStateMachine(config: KafkaConfig,
       case OfflinePartitionLeaderElectionStrategy => // 初始化是用的是OfflinePartitionLeaderElectionStrategy(追参数传递)
         // 注意这里的scala语法，partition是布尔分组器，并返回结果给外边的val变量
         leaderForOffline(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
-      case ReassignPartitionLeaderElectionStrategy =>
+      case ReassignPartitionLeaderElectionStrategy => // 分区重分配时的选举算法
         leaderForReassign(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
+      // TODO 还有2个选举算法
       case PreferredReplicaPartitionLeaderElectionStrategy =>
         leaderForPreferredReplica(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
       case ControlledShutdownPartitionLeaderElectionStrategy =>
         leaderForControlledShutdown(validPartitionsForElection, shuttingDownBrokers).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
     }
+    // 没选举出leader的分区
     partitionsWithoutLeaders.foreach { case (partition, _, _) =>
       val failMsg = s"Failed to elect leader for partition $partition under strategy $partitionLeaderElectionStrategy"
       failedElections.put(partition, new StateChangeFailedException(failMsg))
     }
+
+    // 分区和存活的副本形成一个集合
     val recipientsPerPartition = partitionsWithLeaders.map { case (partition, _, recipients) => partition -> recipients }.toMap
+    // 分区和选举后的isr形成一个集合
     val adjustedLeaderAndIsrs = partitionsWithLeaders.map { case (partition, leaderAndIsrOpt, _) => partition -> leaderAndIsrOpt.get }.toMap
+
+    // 更新每个选举成功的分区，更新leaderAndIsr，controller epoch
     val UpdateLeaderAndIsrResult(successfulUpdates, updatesToRetry, failedUpdates) = zkClient.updateLeaderAndIsr(
       adjustedLeaderAndIsrs, controllerContext.epoch)
+    // updatesToRetry是版本冲突而更新失败的分区
+
     successfulUpdates.foreach { case (partition, leaderAndIsr) =>
       val replicas = controllerContext.partitionReplicaAssignment(partition)
       val leaderIsrAndControllerEpoch = LeaderIsrAndControllerEpoch(leaderAndIsr, controllerContext.epoch)
+      // zk更新成功，放入本地缓存
       controllerContext.partitionLeadershipInfo.put(partition, leaderIsrAndControllerEpoch)
+      // 发送LeaderAndIsr请求
       controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(recipientsPerPartition(partition), partition,
         leaderIsrAndControllerEpoch, replicas, isNew = false)
     }
-    (successfulUpdates.keys.toSeq, updatesToRetry, failedElections.toMap ++ failedUpdates)
+    (successfulUpdates.keys.toSeq, updatesToRetry, failedElections.toMap ++ failedUpdates) // 这里是选举失败和更新zk失败的合并
   }
 
   /**
     * OfflinePartitionLeaderElectionStrategy策略选举partition leader
     * @param leaderIsrAndControllerEpochs 每个分区的LeaderIsrAndControllerEpoch
-    * @return
+    * @return Seq[(分区，LeaderAndIsr，存活的副本)]
     */
   private def leaderForOffline(leaderIsrAndControllerEpochs: Seq[(TopicPartition, LeaderIsrAndControllerEpoch)]):
   Seq[(TopicPartition, Option[LeaderAndIsr], Seq[Int])] = {
@@ -411,6 +421,8 @@ class PartitionStateMachine(config: KafkaConfig,
         (partition, Option(leaderIsrAndControllerEpoch), logConfigs(partition.topic).uncleanLeaderElectionEnable.booleanValue())
       }
     } ++ partitionsWithLiveInSyncReplicas.map { case (partition, leaderIsrAndControllerEpoch) => (partition, Option(leaderIsrAndControllerEpoch), false) }
+    // partitionsWithLiveInSyncReplicas uncleanLeaderElectionEnabled默认为false，说明有isr副本有存活的，就一定从isr里选，哪怕只有1个
+
     partitionsWithUncleanLeaderElectionState.map { case (partition, leaderIsrAndControllerEpochOpt, uncleanLeaderElectionEnabled) =>
       // 获取副本集合
       val assignment = controllerContext.partitionReplicaAssignment(partition)
@@ -419,10 +431,14 @@ class PartitionStateMachine(config: KafkaConfig,
       if (leaderIsrAndControllerEpochOpt.nonEmpty) {
         val leaderIsrAndControllerEpoch = leaderIsrAndControllerEpochOpt.get
         val isr = leaderIsrAndControllerEpoch.leaderAndIsr.isr
+        // 选举分区leader的算法
         val leaderOpt = PartitionLeaderElectionAlgorithms.offlinePartitionLeaderElection(assignment, isr, liveReplicas.toSet, uncleanLeaderElectionEnabled, controllerContext)
+
         val newLeaderAndIsrOpt = leaderOpt.map { leader =>
+          // 如果副本是从isr里选出来的，就再过滤检查一遍isr里的副本是否在线
           val newIsr = if (isr.contains(leader)) isr.filter(replica => controllerContext.isReplicaOnline(replica, partition))
           else List(leader)
+          // leader epoch+1,返回新的LeaderAndIsr
           leaderIsrAndControllerEpoch.leaderAndIsr.newLeaderAndIsr(leader, newIsr)
         }
         (partition, newLeaderAndIsrOpt, liveReplicas)
@@ -435,7 +451,9 @@ class PartitionStateMachine(config: KafkaConfig,
   private def leaderForReassign(leaderIsrAndControllerEpochs: Seq[(TopicPartition, LeaderIsrAndControllerEpoch)]):
   Seq[(TopicPartition, Option[LeaderAndIsr], Seq[Int])] = {
     leaderIsrAndControllerEpochs.map { case (partition, leaderIsrAndControllerEpoch) =>
+      // 重分配的副本
       val reassignment = controllerContext.partitionsBeingReassigned(partition).newReplicas
+      // 存活的重分配副本
       val liveReplicas = reassignment.filter(replica => controllerContext.isReplicaOnline(replica, partition))
       val isr = leaderIsrAndControllerEpoch.leaderAndIsr.isr
       val leaderOpt = PartitionLeaderElectionAlgorithms.reassignPartitionLeaderElection(reassignment, isr, liveReplicas.toSet)
@@ -492,20 +510,43 @@ class PartitionStateMachine(config: KafkaConfig,
 }
 
 object PartitionLeaderElectionAlgorithms {
+  /**
+    *
+    * @param assignment 分区分配的副本
+    * @param isr zk中的ISR
+    * @param liveReplicas assignment中在线的副本
+    * @param uncleanLeaderElectionEnabled
+    * @param controllerContext
+    * @return
+    */
   def offlinePartitionLeaderElection(assignment: Seq[Int], isr: Seq[Int], liveReplicas: Set[Int], uncleanLeaderElectionEnabled: Boolean, controllerContext: ControllerContext): Option[Int] = {
+    // 从assignment中找第一个liveReplicas和isr都有的replica id
+    // 找不到执行orElse逻辑
     assignment.find(id => liveReplicas.contains(id) && isr.contains(id)).orElse {
-      if (uncleanLeaderElectionEnabled) {
+      if (uncleanLeaderElectionEnabled) { // unclean elect
+        // 从assignment找第一个Online的Replica作为leader
+        // 也就是说不在isr里的副本也可以参与选举（uncleanLeaderElect）
         val leaderOpt = assignment.find(liveReplicas.contains)
         if (!leaderOpt.isEmpty)
+          // metrics
           controllerContext.stats.uncleanLeaderElectionRate.mark()
         leaderOpt
       } else {
+        // 所有的副本都不在线
         None
       }
     }
   }
 
+  /**
+    *
+    * @param reassignment 要重分配的副本
+    * @param isr isr副本
+    * @param liveReplicas reassignment中存活的副本
+    * @return
+    */
   def reassignPartitionLeaderElection(reassignment: Seq[Int], isr: Seq[Int], liveReplicas: Set[Int]): Option[Int] = {
+    // reassignment里 liveReplicas和isr都有的副本 (取第一个)
     reassignment.find(id => liveReplicas.contains(id) && isr.contains(id))
   }
 

@@ -169,20 +169,24 @@ class ReplicaStateMachine(config: KafkaConfig,
     //validReplicas==>Seq[PartitionAndReplica]
     targetState match {
       case NewReplica =>
+        // 如果replicaState里没有副本的状态，默认为NonExistentReplica
         validReplicas.foreach { replica =>
           val partition = replica.topicPartition
           controllerContext.partitionLeadershipInfo.get(partition) match {
             case Some(leaderIsrAndControllerEpoch) =>
+              // 这是异常情况NonExistentReplica的副本不能是leader
               if (leaderIsrAndControllerEpoch.leaderAndIsr.leader == replicaId) {
                 val exception = new StateChangeFailedException(s"Replica $replicaId for partition $partition cannot be moved to NewReplica state as it is being requested to become leader")
                 logFailedStateChange(replica, replicaState(replica), OfflineReplica, exception)
               } else {
+                // 发送leaderAndIsr请求
                 controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                   replica.topicPartition,
                   leaderIsrAndControllerEpoch,
                   controllerContext.partitionReplicaAssignment(replica.topicPartition),
                   isNew = true)
                 logSuccessfulTransition(replicaId, partition, replicaState(replica), NewReplica)
+                // 更新缓存
                 replicaState.put(replica, NewReplica)
               }
             case None =>

@@ -67,7 +67,7 @@ class TopicDeletionManager(controller: KafkaController,
                            zkClient: KafkaZkClient) extends Logging {
   this.logIdent = s"[Topic Deletion Manager ${controller.config.brokerId}], "
   val controllerContext = controller.controllerContext
-  val isDeleteTopicEnabled = controller.config.deleteTopicEnable
+  val isDeleteTopicEnabled = controller.config.deleteTopicEnable // delete.topic.enable
   val topicsToBeDeleted = mutable.Set.empty[String]
   val partitionsToBeDeleted = mutable.Set.empty[TopicPartition]
   val topicsIneligibleForDeletion = mutable.Set.empty[String]
@@ -87,6 +87,7 @@ class TopicDeletionManager(controller: KafkaController,
 
   def tryTopicDeletion(): Unit = {
     if (isDeleteTopicEnabled) {
+      // TODO 删除后期再说
       resumeDeletions()
     }
   }
@@ -124,6 +125,7 @@ class TopicDeletionManager(controller: KafkaController,
    */
   def resumeDeletionForTopics(topics: Set[String] = Set.empty) {
     if (isDeleteTopicEnabled) {
+      // 交集运算
       val topicsToResumeDeletion = topics & topicsToBeDeleted
       if (topicsToResumeDeletion.nonEmpty) {
         topicsIneligibleForDeletion --= topicsToResumeDeletion
@@ -330,6 +332,8 @@ class TopicDeletionManager(controller: KafkaController,
 
     topicsQueuedForDeletion.foreach { topic =>
       // if all replicas are marked as deleted successfully, then topic deletion is done
+      // 所有副本都删除了，topic才算被删除
+      // topic有n个分区，分区有n个副本，删除还是比较耗时的
       if (controller.replicaStateMachine.areAllReplicasForTopicDeleted(topic)) {
         // clear up all state for this topic from controller cache and zookeeper
         completeDeleteTopic(topic)

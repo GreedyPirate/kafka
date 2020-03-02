@@ -162,6 +162,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   /**
+   * 根据controllerEpoch更新每一个分区的LeaderAndIsr
    * Update the partition states of multiple partitions in zookeeper.
    * @param leaderAndIsrs The partition states to update.
    * @param controllerEpoch The current controller epoch.
@@ -171,9 +172,11 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
     val successfulUpdates = mutable.Map.empty[TopicPartition, LeaderAndIsr]
     val updatesToRetry = mutable.Buffer.empty[TopicPartition]
     val failed = mutable.Map.empty[TopicPartition, Exception]
+
     val leaderIsrAndControllerEpochs = leaderAndIsrs.map { case (partition, leaderAndIsr) =>
       partition -> LeaderIsrAndControllerEpoch(leaderAndIsr, controllerEpoch)
     }
+    // 更新分区的state节点
     val setDataResponses = try {
       setTopicPartitionStatesRaw(leaderIsrAndControllerEpochs)
     } catch {
@@ -186,6 +189,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
       setDataResponse.resultCode match {
         case Code.OK =>
           val updatedLeaderAndIsr = leaderAndIsrs(partition).withZkVersion(setDataResponse.stat.getVersion)
+          // 返回更新成功的结果
           successfulUpdates.put(partition, updatedLeaderAndIsr)
         case Code.BADVERSION => updatesToRetry += partition
         case _ => failed.put(partition, setDataResponse.resultException.get)
@@ -380,6 +384,8 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
    * @return SetDataResponse
    */
   def setTopicAssignmentRaw(topic: String, assignment: collection.Map[TopicPartition, Seq[Int]]): SetDataResponse = {
+    // 更新节点 /brokers/topics/topicXxx
+    //{"version":1,"partitions":{"4":[1,2,0],"5":[2,0,1],"1":[1,0,2],"0":[0,2,1],"2":[2,1,0],"3":[0,1,2]}}
     val setDataRequest = SetDataRequest(TopicZNode.path(topic), TopicZNode.encode(assignment), ZkVersion.MatchAnyVersion)
     retryRequestUntilConnected(setDataRequest)
   }
