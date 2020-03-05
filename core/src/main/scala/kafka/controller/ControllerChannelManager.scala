@@ -82,6 +82,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
       val stateInfoOpt = brokerStateInfo.get(brokerId)
       stateInfoOpt match {
         case Some(stateInfo) =>
+          // 封装成QueueItem，等待处理
           stateInfo.messageQueue.put(QueueItem(apiKey, request, callback, time.milliseconds()))
         case None =>
           warn(s"Not sending request $request to broker $brokerId, since it is offline.")
@@ -255,6 +256,7 @@ class RequestSendThread(val controllerId: Int,
       if (clientResponse != null) {
         val requestHeader = clientResponse.requestHeader
         val api = requestHeader.apiKey
+        // 只处理这三种请求
         if (api != ApiKeys.LEADER_AND_ISR && api != ApiKeys.STOP_REPLICA && api != ApiKeys.UPDATE_METADATA)
           throw new KafkaException(s"Unexpected apiKey received: $apiKey")
 
@@ -330,7 +332,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
   def addLeaderAndIsrRequestForBrokers(brokerIds: Seq[Int], topicPartition: TopicPartition,
                                        leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
                                        replicas: Seq[Int], isNew: Boolean) {
-
+    // isNew只有在新分区，新副本请求时才为true
     brokerIds.filter(_ >= 0).foreach { brokerId =>
       val result = leaderAndIsrRequestMap.getOrElseUpdate(brokerId, mutable.Map.empty)
       val alreadyNew = result.get(topicPartition).exists(_.isNew)
@@ -409,23 +411,35 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
     try {
       val stateChangeLog = stateChangeLogger.withControllerEpoch(controllerEpoch)
 
+      // 1.0版本之后，请求体有变化
       val leaderAndIsrRequestVersion: Short =
         if (controller.config.interBrokerProtocolVersion >= KAFKA_1_0_IV0) 1
         else 0
 
       leaderAndIsrRequestMap.foreach { case (broker, leaderAndIsrPartitionStates) =>
         leaderAndIsrPartitionStates.foreach { case (topicPartition, state) =>
+          // broker是否就是分区leader副本所在的broker
           val typeOfRequest =
             if (broker == state.basePartitionState.leader) "become-leader"
             else "become-follower"
           stateChangeLog.trace(s"Sending $typeOfRequest LeaderAndIsr request $state to broker $broker for partition $topicPartition")
         }
         val leaderIds = leaderAndIsrPartitionStates.map(_._2.basePartitionState.leader).toSet
+        // Set[Node]，就是包装了PLAINTEXT
         val leaders = controllerContext.liveOrShuttingDownBrokers.filter(b => leaderIds.contains(b.id)).map {
           _.node(controller.config.interBrokerListenerName)
         }
+        /**
+          *
+          * @param leaderAndIsrRequestVersion  请求版本
+          * @param controllerId Controller的brokerid
+          * @param controllerEpoch
+          * @param leaderAndIsrPartitionStates
+          * @param leaders leader的broker信息 Node
+          */
         val leaderAndIsrRequestBuilder = new LeaderAndIsrRequest.Builder(leaderAndIsrRequestVersion, controllerId,
           controllerEpoch, leaderAndIsrPartitionStates.asJava, leaders.asJava)
+        // 发送请求，LeaderAndIsrResponseReceived处理响应
         controller.sendRequest(broker, ApiKeys.LEADER_AND_ISR, leaderAndIsrRequestBuilder,
           (r: AbstractResponse) => controller.eventManager.put(controller.LeaderAndIsrResponseReceived(r, broker)))
       }

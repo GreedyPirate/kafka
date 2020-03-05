@@ -7,14 +7,12 @@ class ScalaTest {
   @Test
   def testGroupBy(): Unit = {
 
-    val replicas = Seq(PartitionReplica("test-1", 0), PartitionReplica("test-1", 1), PartitionReplica("test-1", 2),
+    val replicas = Seq(
+      PartitionReplica("test-1", 0), PartitionReplica("test-1", 1), PartitionReplica("test-1", 2),
       PartitionReplica("test-2", 0), PartitionReplica("test-2", 1), PartitionReplica("test-2", 2),
-      PartitionReplica("test-3", 0), PartitionReplica("test-3", 1), PartitionReplica("test-3", 2))
-    val map: Map[Int, Seq[PartitionReplica]] = replicas.groupBy(_.replica)
-    map.foreach { case (replica, obj) => {
-      println(s"replicas: ${replicas}")
-      println(s"obj: ${obj}")
-    }
+      PartitionReplica("test-3", 0), PartitionReplica("test-3", 1), PartitionReplica("test-3", 2)
+    )
+    replicas.groupBy(_.replica).map {  case (replicaId, reps) =>
     }
   }
 
@@ -47,6 +45,33 @@ class ScalaTest {
     println(s"all is $all")
   }
 
+  @Test
+  def TestOr: Unit = {
+    val isr = Seq(1,2,3).toSet
+    var replica = Seq(3,4).toSet
+
+    val all = isr | replica
+    println(s"all is $all")
+  }
+
+  @Test
+  def testExist: Unit = {
+    val replicas = Seq(0,1,2,3)
+    val ret = replicas.exists(r => !(r > 4))
+    println(s"ret is $ret")
+
+    print(replicas.exists(r => r > 4))
+  }
+
+  @Test
+  def testNot: Unit = {
+    val isr = Seq(1,2,3).toSet
+    var replica = Seq(1,2,3,4).toSet
+
+    val newAdd = replica -- isr
+    println(s"newAdd is $newAdd")
+
+  }
 }
 
 case class PartitionReplica(partition: String, replica: Int) {

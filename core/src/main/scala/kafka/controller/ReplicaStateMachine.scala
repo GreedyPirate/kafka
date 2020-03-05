@@ -103,7 +103,7 @@ class ReplicaStateMachine(config: KafkaConfig,
     if (replicas.nonEmpty) {
       try {
         controllerBrokerRequestBatch.newBatch()
-        // 按照replica id分组，从这里看不出来为什么要按照replica id分组
+        // 为什么要按replica 分组，因为这也是brokerid，为了发请求方便？
         replicas.groupBy(_.replica).map { case (replicaId, replicas) =>
           val partitions = replicas.map(_.topicPartition)
           doHandleStateChanges(replicaId, partitions, targetState, callbacks)
@@ -199,19 +199,22 @@ class ReplicaStateMachine(config: KafkaConfig,
           val partition = replica.topicPartition
           replicaState(replica) match { // 这里获取的是分区->副本的状态
             case NewReplica =>
-              // NewReplica仅仅是检查了缓存是否存在，然后不存在则更新了下缓存
+              // NewReplica->OnlineReplica，本地分区副本分配缓存里如果没有该副本，就更新进去
               val assignment = controllerContext.partitionReplicaAssignment(partition) // 从缓存中获取分区对应的副本集合
               if (!assignment.contains(replicaId)) {
                 controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId) // 感觉用PartitionAndReplica.replica
               }
-            case _ =>
+            case _ => // 其他状态 -> OnlineReplica
               controllerContext.partitionLeadershipInfo.get(partition) match {
                 case Some(leaderIsrAndControllerEpoch) =>
                   // 发送LeaderAndIsr请求(放入等待队列)
-                  controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
+                  controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(
+                    Seq(replicaId),
                     replica.topicPartition,
                     leaderIsrAndControllerEpoch,
-                    controllerContext.partitionReplicaAssignment(partition), isNew = false)
+                    controllerContext.partitionReplicaAssignment(partition),
+                    isNew = false
+                  )
                 case None =>
               }
           }

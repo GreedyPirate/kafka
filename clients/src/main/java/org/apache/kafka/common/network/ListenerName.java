@@ -29,6 +29,7 @@ public final class ListenerName {
      * Create an instance with the security protocol name as the value.
      */
     public static ListenerName forSecurityProtocol(SecurityProtocol securityProtocol) {
+        // PLAINTEXT
         return new ListenerName(securityProtocol.name);
     }
 

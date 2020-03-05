@@ -27,11 +27,13 @@ class ControllerContext {
 
   var controllerChannelManager: ControllerChannelManager = null
 
+  // 关闭的broker
   var shuttingDownBrokerIds: mutable.Set[Int] = mutable.Set.empty
   // controller epoch 在kafka中epoch就相当于乐观锁的version
   var epoch: Int = KafkaController.InitialControllerEpoch - 1
   // 这是zk自带的version，通用的用于更新节点数据
   var epochZkVersion: Int = KafkaController.InitialControllerEpochZkVersion - 1
+  // 所有的topic
   var allTopics: Set[String] = Set.empty
   // Map[Topic, Map[Partition, Seq[Replica]]] 存储每个topic的每个分区的副本集合
   private var partitionReplicaAssignmentUnderlying: mutable.Map[String, mutable.Map[Int, Seq[Int]]] = mutable.Map.empty
@@ -39,10 +41,12 @@ class ControllerContext {
   // LeaderIsrAndControllerEpoch: {"controller_epoch":19,"leader":0,"version":1,"leader_epoch":57,"isr":[0,1,2]}
   val partitionLeadershipInfo: mutable.Map[TopicPartition, LeaderIsrAndControllerEpoch] = mutable.Map.empty
 
+  // 准备要重分配副本的分区
   val partitionsBeingReassigned: mutable.Map[TopicPartition, ReassignedPartitionsContext] = mutable.Map.empty
   // 这要等到向Controller发送LeaderAndIsr请求之后，才能初始化，key是brokerId
   val replicasOnOfflineDirs: mutable.Map[Int, Set[TopicPartition]] = mutable.Map.empty
 
+  //存活的broker
   private var liveBrokersUnderlying: Set[Broker] = Set.empty
   private var liveBrokerIdsUnderlying: Set[Int] = Set.empty
 

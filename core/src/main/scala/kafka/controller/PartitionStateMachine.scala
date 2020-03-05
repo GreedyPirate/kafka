@@ -82,12 +82,14 @@ class PartitionStateMachine(config: KafkaConfig,
       controllerContext.partitionLeadershipInfo.get(topicPartition) match {
         case Some(currentLeaderIsrAndEpoch) =>
           // else, check if the leader for partition is alive. If yes, it is in Online state, else it is in Offline state
+          // leader存活就是OnlinePartition状态的分区，否则就是OfflinePartition
           if (controllerContext.isReplicaOnline(currentLeaderIsrAndEpoch.leaderAndIsr.leader, topicPartition))
           // leader is alive
             partitionState.put(topicPartition, OnlinePartition)
           else
             partitionState.put(topicPartition, OfflinePartition)
         case None =>
+          // 没有leader为NewPartition状态
           partitionState.put(topicPartition, NewPartition)
       }
     }
@@ -357,7 +359,6 @@ class PartitionStateMachine(config: KafkaConfig,
         leaderForOffline(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
       case ReassignPartitionLeaderElectionStrategy => // 分区重分配时的选举算法
         leaderForReassign(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
-      // TODO 还有2个选举算法
       case PreferredReplicaPartitionLeaderElectionStrategy =>
         leaderForPreferredReplica(validPartitionsForElection).partition { case (_, newLeaderAndIsrOpt, _) => newLeaderAndIsrOpt.isEmpty }
       case ControlledShutdownPartitionLeaderElectionStrategy =>
