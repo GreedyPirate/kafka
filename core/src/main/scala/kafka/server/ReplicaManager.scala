@@ -1103,6 +1103,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
     replicaStateChangeLock synchronized {
       if (leaderAndIsrRequest.controllerEpoch < controllerEpoch) {
+        // Controller已换届，忽略leaderAndIsr请求
         stateChangeLogger.warn(s"Ignoring LeaderAndIsr request from controller ${leaderAndIsrRequest.controllerId} with " +
           s"correlation id $correlationId since its controller epoch ${leaderAndIsrRequest.controllerEpoch} is old. " +
           s"Latest known controller epoch is $controllerEpoch")
@@ -1110,14 +1111,17 @@ class ReplicaManager(val config: KafkaConfig,
       } else {
         val responseMap = new mutable.HashMap[TopicPartition, Errors]
         val controllerId = leaderAndIsrRequest.controllerId
+        // 这里的controllerEpoch记录的是最新一次执行LeaderAndIsr请求的controllerEpoch
         controllerEpoch = leaderAndIsrRequest.controllerEpoch
 
         // First check partition's leader epoch
         val partitionState = new mutable.HashMap[Partition, LeaderAndIsrRequest.PartitionState]()
+        // 缓存里没有的是新分区
         val newPartitions = leaderAndIsrRequest.partitionStates.asScala.keys.filter(topicPartition => getPartition(topicPartition).isEmpty)
 
+        // 一堆检查
         leaderAndIsrRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
-          val partition = getOrCreatePartition(topicPartition)
+          val partition = getOrCreatePartition(topicPartition) // 返回的是Partition对象,新的partition有Pool的valueFactory初始化
           val partitionLeaderEpoch = partition.getLeaderEpoch
           if (partition eq ReplicaManager.OfflinePartition) {
             stateChangeLogger.warn(s"Ignoring LeaderAndIsr request from " +
@@ -1126,9 +1130,11 @@ class ReplicaManager(val config: KafkaConfig,
               "partition is in an offline log directory")
             responseMap.put(topicPartition, Errors.KAFKA_STORAGE_ERROR)
           } else if (partitionLeaderEpoch < stateInfo.basePartitionState.leaderEpoch) {
+            // 本地缓存的leader epoch要比请求中的leader epoch小，因为请求里的leader epoch是加1了的
             // If the leader epoch is valid record the epoch of the controller that made the leadership decision.
             // This is useful while updating the isr to maintain the decision maker controller's epoch in the zookeeper path
             if(stateInfo.basePartitionState.replicas.contains(localBrokerId))
+              // 最终想要的数据
               partitionState.put(partition, stateInfo)
             else {
               stateChangeLogger.warn(s"Ignoring LeaderAndIsr request from controller $controllerId with " +
@@ -1147,16 +1153,21 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
 
+        // 要变更的leader副本在当前broker
         val partitionsTobeLeader = partitionState.filter { case (_, stateInfo) =>
           stateInfo.basePartitionState.leader == localBrokerId
         }
+        // 其余的副本在当前broker都是follower
         val partitionsToBeFollower = partitionState -- partitionsTobeLeader.keys
 
         val partitionsBecomeLeader = if (partitionsTobeLeader.nonEmpty)
+          // 标记为leader的分区
           makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
         else
           Set.empty[Partition]
+
         val partitionsBecomeFollower = if (partitionsToBeFollower.nonEmpty)
+        // 标记为follower的分区
           makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap)
         else
           Set.empty[Partition]
@@ -1212,18 +1223,24 @@ class ReplicaManager(val config: KafkaConfig,
    * return the set of partitions that are made leader due to this method
    *
    *  TODO: the above may need to be fixed later
+   *  在当前broker上为分区设置leader
+   *  1. 停止副本的同步，因为已经变为leader了，不需要同步
+   *  2. 更新元数据缓存
+   *  3. 添加都分区leader集合里
    */
   private def makeLeaders(controllerId: Int,
                           epoch: Int,
                           partitionState: Map[Partition, LeaderAndIsrRequest.PartitionState],
                           correlationId: Int,
                           responseMap: mutable.Map[TopicPartition, Errors]): Set[Partition] = {
+    // 要变更leader的分区
     partitionState.keys.foreach { partition =>
       stateChangeLogger.trace(s"Handling LeaderAndIsr request correlationId $correlationId from " +
         s"controller $controllerId epoch $epoch starting the become-leader transition for " +
         s"partition ${partition.topicPartition}")
     }
 
+    // 注意partitionState的key是Partition，而不是TopicPartition
     for (partition <- partitionState.keys)
       responseMap.put(partition.topicPartition, Errors.NONE)
 
@@ -1235,6 +1252,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Update the partition information to be the leader
       partitionState.foreach{ case (partition, partitionStateInfo) =>
         try {
+          // 每个分区的leader转换
           if (partition.makeLeader(controllerId, partitionStateInfo, correlationId)) {
             partitionsToMakeLeaders += partition
             stateChangeLogger.trace(s"Stopped fetchers as part of become-leader request from " +

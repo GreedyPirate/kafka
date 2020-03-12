@@ -1257,7 +1257,8 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     def state = ControllerState.ControllerChange
 
     override def process(): Unit = {
-      // 如方法名所示：注册监听/controller节点的handler, 并检查/controller节点是否存在
+      // 如方法名所示：注册监听/controller节点的handler,该handler会监听节点的增，删，改事件
+      // 并检查/controller节点是否存在(不是重点)
       zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
       // 选举
       elect()

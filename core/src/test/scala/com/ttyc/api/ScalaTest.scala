@@ -1,5 +1,7 @@
 package com.ttyc.api
 
+import java.util.Properties
+
 import org.junit.Test
 
 class ScalaTest {
@@ -71,6 +73,19 @@ class ScalaTest {
     val newAdd = replica -- isr
     println(s"newAdd is $newAdd")
 
+  }
+
+  @Test
+  def testOverride: Unit = {
+    val originals = new Properties
+    originals.put("time", Int(1000))
+    originals.put("ack",Int(1))
+    originals.put("size",Int(100))
+
+    val overrides = new Properties
+    overrides.put("size", Int(200))
+
+//    originals ++= overrides
   }
 }
 

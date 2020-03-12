@@ -54,6 +54,7 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
         true
       } else {
         val lastEntry = epochs.last
+        // startOffset > lastEntry.startOffset 是不是就不需要更新startOffset了？
         lastEntry.epoch != epoch || startOffset < lastEntry.startOffset
       }
 
@@ -73,7 +74,7 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
     val (retainedEpochs, removedEpochs) = epochs.partition { entry =>
       entry.epoch < entryToAppend.epoch && entry.startOffset < entryToAppend.startOffset
     }
-
+    // retainedEpochs是正常逻辑，单调递增
     epochs = retainedEpochs :+ entryToAppend
 
     if (removedEpochs.isEmpty) {

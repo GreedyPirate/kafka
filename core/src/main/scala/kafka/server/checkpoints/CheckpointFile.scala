@@ -79,6 +79,12 @@ class CheckpointFile[T](val file: File,
     }
   }
 
+  /**
+    * 读取replication-offset-checkpoint文件
+    * 第一行是版本，第二行是总大小
+    * 后面的是具体数据
+    * @return
+    */
   def read(): Seq[T] = {
     def malformedLineException(line: String) =
       new IOException(s"Malformed line in checkpoint file (${file.getAbsolutePath}): $line'")

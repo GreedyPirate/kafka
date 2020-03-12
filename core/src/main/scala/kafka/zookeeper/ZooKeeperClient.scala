@@ -139,7 +139,7 @@ class ZooKeeperClient(connectString: String,
       val responseQueue = new ArrayBlockingQueue[Req#Response](requests.size)
 
       requests.foreach { request =>
-        inFlightRequests.acquire() // 信号量的使用，一个请求结束，下一个请求才能继续
+        inFlightRequests.acquire() // 信号量的使用，限流maxInFlightRequests个请求
         try {
           inReadLock(initializationLock) {
             send(request) { response =>

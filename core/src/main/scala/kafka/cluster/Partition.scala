@@ -57,6 +57,7 @@ class Partition(val topic: String,
   private val logManager = if (!isOffline) replicaManager.logManager else null
   private val zkClient = if (!isOffline) replicaManager.zkClient else null
   // allReplicasMap includes both assigned replicas and the future replica if there is ongoing replica movement
+  // 每一个副本的id，对应的Replica
   private val allReplicasMap = new Pool[Int, Replica]
   // The read lock is only required when multiple reads are executed and needs to be in a consistent manner
   private val leaderIsrUpdateLock = new ReentrantReadWriteLock
@@ -172,13 +173,17 @@ class Partition(val topic: String,
   }
 
   def getOrCreateReplica(replicaId: Int = localBrokerId, isNew: Boolean = false): Replica = {
+    // 根据replicaId从allReplicasMap获取Replica
+    // 没有根据传入的函数创建Replica
     allReplicasMap.getAndMaybePut(replicaId, {
-      if (isReplicaLocal(replicaId)) {
+      if (isReplicaLocal(replicaId)) { // replicaId是否是本地brokerId
         val adminZkClient = new AdminZkClient(zkClient)
+        // 获取 /config/topic/topic名称 节点的数据，即topic配置
         val props = adminZkClient.fetchEntityConfig(ConfigType.Topic, topic)
         val config = LogConfig.fromProps(logManager.currentDefaultConfig.originals, props)
         val log = logManager.getOrCreateLog(topicPartition, config, isNew, replicaId == Request.FutureLocalReplicaId)
         val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParent)
+        // 读取读取replication-offset-checkpoint文件，应该记录的是每个分区的hw
         val offsetMap = checkpoint.read()
         if (!offsetMap.contains(topicPartition))
           info(s"No checkpointed highwatermark is found for partition $topicPartition")
@@ -287,13 +292,18 @@ class Partition(val topic: String,
       // to maintain the decision maker controller's epoch in the zookeeper path
       controllerEpoch = partitionStateInfo.basePartitionState.controllerEpoch
       // add replicas that are new
+      // 获取isr对应的Replica
       val newInSyncReplicas = partitionStateInfo.basePartitionState.isr.asScala.map(r => getOrCreateReplica(r, partitionStateInfo.isNew)).toSet
       // remove assigned replicas that have been removed by the controller
+      // 该分区已有的副本-新分配的副本=controller要移除的副本，从本地缓存中删除
       (assignedReplicas.map(_.brokerId) -- newAssignedReplicas).foreach(removeReplica)
+      // 新的isr是controller传过来的
       inSyncReplicas = newInSyncReplicas
       newAssignedReplicas.foreach(id => getOrCreateReplica(id, partitionStateInfo.isNew))
 
+      // 获取本地副本
       val leaderReplica = getReplica().get
+      // 该leader epoch开始的位移
       val leaderEpochStartOffset = leaderReplica.logEndOffset.messageOffset
       info(s"$topicPartition starts at Leader Epoch ${partitionStateInfo.basePartitionState.leaderEpoch} from " +
         s"offset $leaderEpochStartOffset. Previous Leader Epoch was: $leaderEpoch")
@@ -308,6 +318,7 @@ class Partition(val topic: String,
       // to ensure that these followers can truncate to the right offset, we must cache the new
       // leader epoch and the start offset since it should be larger than any epoch that a follower
       // would try to query.
+      // 将leader epoch及其开始位移写入文件
       leaderReplica.epochs.foreach { epochCache =>
         epochCache.assign(leaderEpoch, leaderEpochStartOffset)
       }
@@ -316,6 +327,7 @@ class Partition(val topic: String,
       val curLeaderLogEndOffset = leaderReplica.logEndOffset.messageOffset
       val curTimeMs = time.milliseconds
       // initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and lastFetchLeaderLogEndOffset.
+      // 本地之外的副本
       (assignedReplicas - leaderReplica).foreach { replica =>
         val lastCaughtUpTimeMs = if (inSyncReplicas.contains(replica)) curTimeMs else 0L
         replica.resetLastCaughtUpTime(curLeaderLogEndOffset, curTimeMs, lastCaughtUpTimeMs)

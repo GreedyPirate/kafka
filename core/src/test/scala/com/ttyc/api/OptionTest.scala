@@ -1,6 +1,4 @@
-package mytest
-
-import org.junit.Test
+package com.ttyc.api
 
 class OptionTest {
 

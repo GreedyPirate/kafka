@@ -64,6 +64,7 @@ object Defaults {
   val FollowerReplicationThrottledReplicas = Collections.emptyList[String]()
   val MaxIdMapSnapshots = kafka.server.Defaults.MaxIdMapSnapshots
   val MessageDownConversionEnable = kafka.server.Defaults.MessageDownConversionEnable
+
 }
 
 /**
@@ -287,6 +288,7 @@ object LogConfig {
   def fromProps(defaults: java.util.Map[_ <: Object, _ <: Object], overrides: Properties): LogConfig = {
     val props = new Properties()
     defaults.asScala.foreach { case (k, v) => props.put(k, v) }
+    // 覆盖默认配置
     props ++= overrides
     // overrides的key集合
     val overriddenKeys = overrides.keySet.asScala.map(_.asInstanceOf[String]).toSet

@@ -137,6 +137,7 @@ case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, i
  * @param dir The directory in which log segments are created.
  * @param config The log configuration settings
  * logStartOffset： 能够暴露给客户端最早的offset(我理解为拉取)， ListOffsetRequest的响应，为了避免用户seek到超出范围的offset，保证logStartOffset <= highWatermark
+ * 其实就是当前第一个Segment的起始位移
  * @param logStartOffset The earliest offset allowed to be exposed to kafka client.
  *                       The logStartOffset can be updated by :
  *                       - user's DeleteRecordsRequest
@@ -149,6 +150,7 @@ case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, i
  *                         we make sure that logStartOffset <= log's highWatermark
  *                       Other activities such as log cleaning are not affected by logStartOffset.
  * @param recoveryPoint The offset at which to begin recovery--i.e. the first offset which has not been flushed to disk
+  *                     恢复的起始offset
  * @param scheduler The thread pool scheduler used for background actions
  * @param brokerTopicStats Container for Broker Topic Yammer Metrics
  * @param time The time instance used for checking the clock
