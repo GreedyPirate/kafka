@@ -751,8 +751,8 @@ class FetchManager(private val time: Time,
                  fetchData: FetchSession.REQ_MAP,
                  toForget: util.List[TopicPartition],
                  isFollower: Boolean): FetchContext = {
-    info(s"sessionId is ${reqMetadata.sessionId()}, epoch is ${reqMetadata.epoch()}")
-    info(s"fetch request params: ${fetchData}, toForget : ${toForget}")
+/*    info(s"sessionId is ${reqMetadata.sessionId()}, epoch is ${reqMetadata.epoch()}")
+    info(s"fetch request params: ${fetchData}, toForget : ${toForget}")*/
     val context = if (reqMetadata.isFull) {
       var removedFetchSessionStr = ""
       if (reqMetadata.sessionId != INVALID_SESSION_ID) {

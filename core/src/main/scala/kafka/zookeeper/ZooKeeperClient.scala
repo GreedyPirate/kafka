@@ -154,8 +154,8 @@ class ZooKeeperClient(connectString: String,
             throw e
         }
       }
-      countDownLatch.await() // 等待所有请求结束
-      responseQueue.asScala.toBuffer // 返回响应结果集合
+      countDownLatch.await() // 拿到所有响应结果后一起返回
+      responseQueue.asScala.toBuffer
     }
   }
 
@@ -233,6 +233,7 @@ class ZooKeeperClient(connectString: String,
         if (nanos <= 0) {
           throw new ZooKeeperClientTimeoutException(s"Timed out waiting for connection while in state: $state")
         }
+        // 等待connectTimeout，zk建联成功后，会唤醒，继续执行
         nanos = isConnectedOrExpiredCondition.awaitNanos(nanos)
         state = connectionState
       }

@@ -67,8 +67,8 @@ class ScalaTest {
 
   @Test
   def testNot: Unit = {
-    val isr = Seq(1,2,3).toSet
-    var replica = Seq(1,2,3,4).toSet
+    val isr = Seq(1,2,3,4).toSet
+    var replica = Seq(5,7,4).toSet
 
     val newAdd = replica -- isr
     println(s"newAdd is $newAdd")
@@ -77,13 +77,13 @@ class ScalaTest {
 
   @Test
   def testOverride: Unit = {
-    val originals = new Properties
+/*    val originals = new Properties
     originals.put("time", Int(1000))
     originals.put("ack",Int(1))
     originals.put("size",Int(100))
 
     val overrides = new Properties
-    overrides.put("size", Int(200))
+    overrides.put("size", Int(200))*/
 
 //    originals ++= overrides
   }

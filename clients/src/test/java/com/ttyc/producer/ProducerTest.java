@@ -2,11 +2,17 @@ package com.ttyc.producer;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
 
+import java.util.List;
 import java.util.Properties;
 
 public class ProducerTest {
     public static void main(String[] args) throws InterruptedException {
+        send("test-3");
+    }
+
+    public static void send (String topic) {
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:9092");
         props.put("key.serializer",
@@ -18,15 +24,21 @@ public class ProducerTest {
 
 
         KafkaProducer<String, String> producer = new KafkaProducer<String, String>(props);
-        for (int i = 0; i < 10000; i++) {
-            ProducerRecord<String, String> record = new ProducerRecord<>("test-1", "local test -------- " + i);
+        List<PartitionInfo> partitionInfos = producer.partitionsFor(topic);
+        partitionInfos.forEach(t->{
+            System.out.println(t);
+        });
+        for (int i = 0; i < 1000; i++) {
+            ProducerRecord<String, String> record = new ProducerRecord<>(topic, "key" + i,  "local test -------- " + i);
             producer.send(record, (data, ex) -> {
                 long offset = data.offset();
                 int partition = data.partition();
-                String topic = data.topic();
-//                System.out.println("topic = " + topic + ",offset = " + offset + ", partition = " + partition);
+                System.out.println("send to partition " + partition);
             });
         }
-        Thread.sleep(2000);
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+        }
     }
 }

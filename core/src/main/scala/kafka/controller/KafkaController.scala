@@ -560,7 +560,8 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     if (!areReplicasInIsr(topicPartition, reassignedReplicas)) { // 说明不是所有的副本都在isr里
       info(s"New replicas ${reassignedReplicas.mkString(",")} for partition $topicPartition being reassigned not yet " +
         "caught up with the leader")
-      // 即将要分配的 减去 之前已分配(缓存里)
+      // 获取本次重分配新增的副本 RAR -- OAR
+      // --差集运算符: (1,2,3,4) -- (1,2) = (3,4)  (4,5,6) -- (1,2,3) = (4,5,6)
       val newReplicasNotInOldReplicaList = reassignedReplicas.toSet -- controllerContext.partitionReplicaAssignment(topicPartition).toSet
       // 新的 + 老的 (会去重) = 全部的
       val newAndOldReplicas = (reassignedPartitionContext.newReplicas ++ controllerContext.partitionReplicaAssignment(topicPartition)).toSet
@@ -568,7 +569,9 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
       //1. 更新reassign之后的全量副本到 /brokers/topics/topic节点
       updateAssignedReplicasForPartition(topicPartition, newAndOldReplicas.toSeq)
       //2. Send LeaderAndIsr request to every replica in OAR + RAR (with AR as OAR + RAR).
-      //3. 发送LeaderAndIsr请求 TODO 这里缓存里的ReplicaAssignment应该等于newAndOldReplicas的, 但是replica也是brokerId
+      //2. 发送LeaderAndIsr请求, 该请求会完成副本同步
+      // 这里缓存里的ReplicaAssignment应该等于newAndOldReplicas的, 但是replica也是brokerId
+      // 注意现在controllerContext里已经是newAndOld了
       updateLeaderEpochAndSendRequest(topicPartition, controllerContext.partitionReplicaAssignment(topicPartition),
         newAndOldReplicas.toSeq)
       //3. replicas in RAR - OAR -> NewReplica
@@ -578,7 +581,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
         "reassigned to catch up with the leader")
     } else {
       //4. Wait until all replicas in RAR are in sync with the leader.
-      // 重分配时原来就有的副本
+      // reassign里没有的副本
       val oldReplicas = controllerContext.partitionReplicaAssignment(topicPartition).toSet -- reassignedReplicas.toSet
       //5. replicas in RAR -> OnlineReplica
       // reassignedReplicas副本转为OnlineReplica状态，因为它们都在ISR中
@@ -832,6 +835,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     val currentLeader = controllerContext.partitionLeadershipInfo(topicPartition).leaderAndIsr.leader
     // change the assigned replica list to just the reassigned replicas in the cache so it gets sent out on the LeaderAndIsr
     // request to the current or new leader. This will prevent it from adding the old replicas to the ISR
+    // 注意前面处理OnlineReplica时，已经包含了本次要分配的副本，所以是oldAndNew
     val oldAndNewReplicas = controllerContext.partitionReplicaAssignment(topicPartition)
     // 更新缓存
     controllerContext.updatePartitionReplicaAssignment(topicPartition, reassignedReplicas)
@@ -886,6 +890,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
       case Code.OK =>
         info(s"Updated assigned replicas for partition $partition being reassigned to ${replicas.mkString(",")}")
         // update the assigned replica list after a successful zookeeper write
+        // 再更新一次？
         controllerContext.updatePartitionReplicaAssignment(partition, replicas)
       case Code.NONODE => throw new IllegalStateException(s"Topic ${partition.topic} doesn't exist")
         // 出了异常，缓存数据也不回滚？

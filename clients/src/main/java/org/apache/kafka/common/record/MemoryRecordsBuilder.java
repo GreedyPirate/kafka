@@ -780,7 +780,6 @@ public class MemoryRecordsBuilder {
     }
 
     private long nextSequentialOffset() {
-        logger.info("debug ===== baseOffset: {}, lastOffset: {}");
         return lastOffset == null ? baseOffset : lastOffset + 1;
     }
 

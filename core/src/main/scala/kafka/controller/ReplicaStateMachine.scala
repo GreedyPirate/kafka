@@ -168,6 +168,7 @@ class ReplicaStateMachine(config: KafkaConfig,
     // 初始化Controller时，targetState=OnlineReplica
     //validReplicas==>Seq[PartitionAndReplica]
     targetState match {
+      // 发送LeaderAndIsr请求，更新本地状态缓存replicaState
       case NewReplica =>
         // 如果replicaState里没有副本的状态，默认为NonExistentReplica
         validReplicas.foreach { replica =>
@@ -183,6 +184,7 @@ class ReplicaStateMachine(config: KafkaConfig,
                 controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                   replica.topicPartition,
                   leaderIsrAndControllerEpoch,
+                  // 从分区重分配调用过来时，分区的副本时OAR+RAR，包括上面的replicaId(brokerId)
                   controllerContext.partitionReplicaAssignment(replica.topicPartition),
                   isNew = true)
                 logSuccessfulTransition(replicaId, partition, replicaState(replica), NewReplica)
@@ -194,6 +196,12 @@ class ReplicaStateMachine(config: KafkaConfig,
               replicaState.put(replica, NewReplica)
           }
         }
+
+      /**
+        *  New->Online controllerContext缓存里没有则添加，有则不处理
+        *  其他->Online 对当前副本所在的broker发送LeaderAndIsr请求
+        *  最后更新本地状态缓存replicaState
+        */
       case OnlineReplica => // previousState: NewReplica, OnlineReplica, OfflineReplica, ReplicaDeletionIneligible
         validReplicas.foreach { replica =>
           val partition = replica.topicPartition
@@ -202,7 +210,7 @@ class ReplicaStateMachine(config: KafkaConfig,
               // NewReplica->OnlineReplica，本地分区副本分配缓存里如果没有该副本，就更新进去
               val assignment = controllerContext.partitionReplicaAssignment(partition) // 从缓存中获取分区对应的副本集合
               if (!assignment.contains(replicaId)) {
-                controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId) // 感觉用PartitionAndReplica.replica
+                controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId)
               }
             case _ => // 其他状态 -> OnlineReplica
               controllerContext.partitionLeadershipInfo.get(partition) match {

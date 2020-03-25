@@ -525,6 +525,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
 
+    info(s"fetch request ${fetchRequest}")
     // FetchSession来做增量的fetch请求
     val fetchContext = fetchManager.newContext(fetchRequest.metadata(),
           fetchRequest.fetchData(),

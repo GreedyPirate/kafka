@@ -1,5 +1,7 @@
 package com.ttyc.api
 
+import org.junit.Test
+
 class OptionTest {
 
   @Test
