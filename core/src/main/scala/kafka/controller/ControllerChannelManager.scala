@@ -303,6 +303,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
   val controllerId: Int = controller.config.brokerId
   // Map[Int, Map[TopicPartition, LeaderAndIsrRequest.PartitionState]]
   // 这里的Int是brokerId
+  // 向一个broker发送多个分区元数据变动的请求
   val leaderAndIsrRequestMap = mutable.Map.empty[Int, mutable.Map[TopicPartition, LeaderAndIsrRequest.PartitionState]]
   val stopReplicaRequestMap = mutable.Map.empty[Int, Seq[StopReplicaRequestInfo]]
   val updateMetadataRequestBrokerSet = mutable.Set.empty[Int]

@@ -155,6 +155,33 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  /**
+    *
+    * LeaderAndIsrRequest请求体
+    {
+      "version": 1,
+      "controllerId": 1,
+      "controllerEpoch": 1,
+      "partitionStates" : [
+          "TopicPartition" : "test-0"
+          "PartitionState": {
+              "isNew": false,
+              "basePartitionState": {
+                  "controllerEpoch": 1,
+                  "leader": 1,
+                  "leaderEpoch": 1,
+                  "isr": [0,1,2],
+                  "zkVersion": 1
+                  "replicas": [2,0,1]
+              }
+          }
+      ],
+      "liveLeaders": [
+
+      ]
+    }
+    * @param request
+    */
   def handleLeaderAndIsrRequest(request: RequestChannel.Request) {
     // ensureTopicExists is only for client facing requests
     // We can't have the ensureTopicExists check here since the controller sends it as an advisory to all brokers so they
