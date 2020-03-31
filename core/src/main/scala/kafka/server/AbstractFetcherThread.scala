@@ -381,7 +381,9 @@ abstract class AbstractFetcherThread(name: String,
     partitionMapLock.lockInterruptibly()
     try {
       topicPartitions.foreach { topicPartition =>
+        // 从map中移除
         partitionStates.remove(topicPartition)
+        // 注销metrics相关
         fetcherLagStats.unregister(topicPartition.topic, topicPartition.partition)
       }
     } finally partitionMapLock.unlock()

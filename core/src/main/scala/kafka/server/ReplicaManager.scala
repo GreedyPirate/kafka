@@ -1096,26 +1096,31 @@ class ReplicaManager(val config: KafkaConfig,
   def becomeLeaderOrFollower(correlationId: Int,
                              leaderAndIsrRequest: LeaderAndIsrRequest,
                              onLeadershipChange: (Iterable[Partition], Iterable[Partition]) => Unit): LeaderAndIsrResponse = {
+    // 就打印了下日志
     leaderAndIsrRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
       stateChangeLogger.trace(s"Received LeaderAndIsr request $stateInfo " +
         s"correlation id $correlationId from controller ${leaderAndIsrRequest.controllerId} " +
         s"epoch ${leaderAndIsrRequest.controllerEpoch} for partition $topicPartition")
     }
+
     replicaStateChangeLock synchronized {
       if (leaderAndIsrRequest.controllerEpoch < controllerEpoch) {
-        // Controller已换届，忽略leaderAndIsr请求
+        // Controller已换届，忽略leaderAndIsr请求，即请求过期
         stateChangeLogger.warn(s"Ignoring LeaderAndIsr request from controller ${leaderAndIsrRequest.controllerId} with " +
           s"correlation id $correlationId since its controller epoch ${leaderAndIsrRequest.controllerEpoch} is old. " +
           s"Latest known controller epoch is $controllerEpoch")
         leaderAndIsrRequest.getErrorResponse(0, Errors.STALE_CONTROLLER_EPOCH.exception)
       } else {
         val responseMap = new mutable.HashMap[TopicPartition, Errors]
+
         val controllerId = leaderAndIsrRequest.controllerId
-        // 这里的controllerEpoch记录的是最新一次执行LeaderAndIsr请求的controllerEpoch
+        // 更新controllerEpoch，记录了最新一次执行LeaderAndIsr请求的controllerEpoch
+        // controller选举必定会发生LeaderAndIsr请求
         controllerEpoch = leaderAndIsrRequest.controllerEpoch
 
         // First check partition's leader epoch
         val partitionState = new mutable.HashMap[Partition, LeaderAndIsrRequest.PartitionState]()
+
         // 缓存里没有的是新分区
         val newPartitions = leaderAndIsrRequest.partitionStates.asScala.keys.filter(topicPartition => getPartition(topicPartition).isEmpty)
 
@@ -1123,17 +1128,18 @@ class ReplicaManager(val config: KafkaConfig,
         leaderAndIsrRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
           val partition = getOrCreatePartition(topicPartition) // 返回的是Partition对象,新的partition有Pool的valueFactory初始化
           val partitionLeaderEpoch = partition.getLeaderEpoch
+          // 分区离线
           if (partition eq ReplicaManager.OfflinePartition) {
             stateChangeLogger.warn(s"Ignoring LeaderAndIsr request from " +
               s"controller $controllerId with correlation id $correlationId " +
               s"epoch $controllerEpoch for partition $topicPartition as the local replica for the " +
               "partition is in an offline log directory")
             responseMap.put(topicPartition, Errors.KAFKA_STORAGE_ERROR)
-          } else if (partitionLeaderEpoch < stateInfo.basePartitionState.leaderEpoch) {
+          } else if (partitionLeaderEpoch < stateInfo.basePartitionState.leaderEpoch) { // 这是正常的情形
             // 本地缓存的leader epoch要比请求中的leader epoch小，因为请求里的leader epoch是加1了的
             // If the leader epoch is valid record the epoch of the controller that made the leadership decision.
             // This is useful while updating the isr to maintain the decision maker controller's epoch in the zookeeper path
-            if(stateInfo.basePartitionState.replicas.contains(localBrokerId))
+            if(stateInfo.basePartitionState.replicas.contains(localBrokerId)) // 合理的判断，副本id肯定包含当前brokerId
               // 最终想要的数据
               partitionState.put(partition, stateInfo)
             else {
@@ -1226,7 +1232,7 @@ class ReplicaManager(val config: KafkaConfig,
    *  在当前broker上为分区设置leader
    *  1. 停止副本的同步，因为已经变为leader了，不需要同步
    *  2. 更新元数据缓存
-   *  3. 添加都分区leader集合里
+   *  3. 添加到分区leader集合里
    */
   private def makeLeaders(controllerId: Int,
                           epoch: Int,
@@ -1252,7 +1258,7 @@ class ReplicaManager(val config: KafkaConfig,
       // Update the partition information to be the leader
       partitionState.foreach{ case (partition, partitionStateInfo) =>
         try {
-          // 每个分区的leader转换
+          // 每个分区leader副本的转换，下面的代码全是日志，就看makeLeader
           if (partition.makeLeader(controllerId, partitionStateInfo, correlationId)) {
             partitionsToMakeLeaders += partition
             stateChangeLogger.trace(s"Stopped fetchers as part of become-leader request from " +

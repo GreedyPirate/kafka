@@ -177,7 +177,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           }
       ],
       "liveLeaders": [
-
+        // 来上面每个分区leader所在的broker(存活的)
       ]
     }
     * @param request

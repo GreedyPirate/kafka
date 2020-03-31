@@ -172,6 +172,10 @@ class Partition(val topic: String,
     }
   }
 
+  /**
+    * @param replicaId
+    * @param isNew 就是LeaderAndIsr中的isNew
+    */
   def getOrCreateReplica(replicaId: Int = localBrokerId, isNew: Boolean = false): Replica = {
     // 根据replicaId从allReplicasMap获取Replica
     // 没有根据传入的函数创建Replica
@@ -187,9 +191,12 @@ class Partition(val topic: String,
         val offsetMap = checkpoint.read()
         if (!offsetMap.contains(topicPartition))
           info(s"No checkpointed highwatermark is found for partition $topicPartition")
+        // checkpoint中的HW和LEO的最小值作为replica初始HW
         val offset = math.min(offsetMap.getOrElse(topicPartition, 0L), log.logEndOffset)
         new Replica(replicaId, topicPartition, time, offset, Some(log))
-      } else new Replica(replicaId, topicPartition, time)
+      } else {
+        new Replica(replicaId, topicPartition, time)
+      }
     })
   }
 
@@ -287,28 +294,32 @@ class Partition(val topic: String,
    */
   def makeLeader(controllerId: Int, partitionStateInfo: LeaderAndIsrRequest.PartitionState, correlationId: Int): Boolean = {
     val (leaderHWIncremented, isNewLeader) = inWriteLock(leaderIsrUpdateLock) {
+      // 请求中的AR
       val newAssignedReplicas = partitionStateInfo.basePartitionState.replicas.asScala.map(_.toInt)
       // record the epoch of the controller that made the leadership decision. This is useful while updating the isr
       // to maintain the decision maker controller's epoch in the zookeeper path
+      // Partition里也有一份controllerEpoch
       controllerEpoch = partitionStateInfo.basePartitionState.controllerEpoch
       // add replicas that are new
       // 获取isr对应的Replica
       val newInSyncReplicas = partitionStateInfo.basePartitionState.isr.asScala.map(r => getOrCreateReplica(r, partitionStateInfo.isNew)).toSet
       // remove assigned replicas that have been removed by the controller
-      // 该分区已有的副本-新分配的副本=controller要移除的副本，从本地缓存中删除
+      // 该分区已有的副本-新分配的副本=controller要移除的副本，从本地缓存allReplicasMap = new Pool[Int, Replica]中删除
       (assignedReplicas.map(_.brokerId) -- newAssignedReplicas).foreach(removeReplica)
-      // 新的isr是controller传过来的
+      // 新的isr是controller传过来的,更新
       inSyncReplicas = newInSyncReplicas
+      // 获取replicas对应的Replica
       newAssignedReplicas.foreach(id => getOrCreateReplica(id, partitionStateInfo.isNew))
 
-      // 获取本地副本
+      // 获取该分区的本地副本，通过前面的判断，此处为该分区的leader副本
       val leaderReplica = getReplica().get
-      // 该leader epoch开始的位移
+      // 获取leader副本的LEO
       val leaderEpochStartOffset = leaderReplica.logEndOffset.messageOffset
       info(s"$topicPartition starts at Leader Epoch ${partitionStateInfo.basePartitionState.leaderEpoch} from " +
         s"offset $leaderEpochStartOffset. Previous Leader Epoch was: $leaderEpoch")
 
       //We cache the leader epoch here, persisting it only if it's local (hence having a log dir)
+      // 更新leaderEpoch，以及这一届leaderEpoch对应的StartOffset
       leaderEpoch = partitionStateInfo.basePartitionState.leaderEpoch
       leaderEpochStartOffsetOpt = Some(leaderEpochStartOffset)
       zkVersion = partitionStateInfo.basePartitionState.zkVersion
@@ -318,6 +329,9 @@ class Partition(val topic: String,
       // to ensure that these followers can truncate to the right offset, we must cache the new
       // leader epoch and the start offset since it should be larger than any epoch that a follower
       // would try to query.
+      // 在短暂的时间内连续选举的情况下，一个follower的epoch可能比leader的epoch大，为了保证follower能正确截断日志，
+      // 我们必须保存新的leader epoch和它的start offset(leader 副本当前的LEO)
+
       // 将leader epoch及其开始位移写入文件
       leaderReplica.epochs.foreach { epochCache =>
         epochCache.assign(leaderEpoch, leaderEpochStartOffset)

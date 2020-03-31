@@ -53,8 +53,10 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
       val updateNeeded = if (epochs.isEmpty) {
         true
       } else {
+        // leader epoch的最后一个
         val lastEntry = epochs.last
-        // startOffset > lastEntry.startOffset 是不是就不需要更新startOffset了？
+        // epoch不相等会更新 (这是正常更新)
+        // epoch相等但是startOffset < lastEntry.startOffset会更新 (这不太可能)
         lastEntry.epoch != epoch || startOffset < lastEntry.startOffset
       }
 

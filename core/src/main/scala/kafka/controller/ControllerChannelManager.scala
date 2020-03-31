@@ -330,11 +330,20 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
     updateMetadataRequestPartitionInfoMap.clear()
   }
 
+  /**
+    * @param brokerIds 通常是副本id，这里也是要请求的目标broker
+    * @param topicPartition 分区
+    * @param leaderIsrAndControllerEpoch leader， isr，controllerEpoch
+    * @param replicas 通常是controllerContext缓存的分区副本集合
+    * @param isNew 新建副本，新建分区是为true
+    */
   def addLeaderAndIsrRequestForBrokers(brokerIds: Seq[Int], topicPartition: TopicPartition,
                                        leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
                                        replicas: Seq[Int], isNew: Boolean) {
     // isNew只有在新分区，新副本请求时才为true
     brokerIds.filter(_ >= 0).foreach { brokerId =>
+      // 每个broker的LeaderAndIsr请求都有一个缓存
+      // result: Map[TopicPartition, LeaderAndIsrRequest.PartitionState]
       val result = leaderAndIsrRequestMap.getOrElseUpdate(brokerId, mutable.Map.empty)
       val alreadyNew = result.get(topicPartition).exists(_.isNew)
       // 添加到目标broker的 leaderAndIsr请求队列中
@@ -346,7 +355,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
         replicas.map(Integer.valueOf).asJava,
         isNew || alreadyNew))
     }
-
+    // 同时增加了一次UpdateMetadata请求
     addUpdateMetadataRequestForBrokers(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set(topicPartition))
   }
 
@@ -408,6 +417,10 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
     )
   }
 
+  /**
+    * 发送缓存中的所有请求
+    * @param controllerEpoch
+    */
   def sendRequestsToBrokers(controllerEpoch: Int) {
     try {
       val stateChangeLog = stateChangeLogger.withControllerEpoch(controllerEpoch)
@@ -425,8 +438,11 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
             else "become-follower"
           stateChangeLog.trace(s"Sending $typeOfRequest LeaderAndIsr request $state to broker $broker for partition $topicPartition")
         }
+        // 这里很不起眼，但我觉得很重要，leaderAndIsrPartitionStates：Map[TopicPartition, LeaderAndIsrRequest.PartitionState]
+        // 说明要向一个broker请求，里面包含了多个分区的状态变更，这里获取了所有分区的leader所在的broker
         val leaderIds = leaderAndIsrPartitionStates.map(_._2.basePartitionState.leader).toSet
         // Set[Node]，就是包装了PLAINTEXT
+        // leaders表示过滤leaderIds里存活的broker，代码简单，但也有点绕
         val leaders = controllerContext.liveOrShuttingDownBrokers.filter(b => leaderIds.contains(b.id)).map {
           _.node(controller.config.interBrokerListenerName)
         }
