@@ -311,7 +311,7 @@ class Partition(val topic: String,
       // 获取replicas对应的Replica
       newAssignedReplicas.foreach(id => getOrCreateReplica(id, partitionStateInfo.isNew))
 
-      // 获取该分区的本地副本，通过前面的判断，此处为该分区的leader副本
+      // 不是说当前replica是leader副本，而是说它即将要成为leader
       val leaderReplica = getReplica().get
       // 获取leader副本的LEO
       val leaderEpochStartOffset = leaderReplica.logEndOffset.messageOffset
@@ -337,11 +337,14 @@ class Partition(val topic: String,
         epochCache.assign(leaderEpoch, leaderEpochStartOffset)
       }
 
+      // 如果分区的leader副本就是当前broker，就不用变更了
+      // 注：看becomeLeaderOrFollower方法的星号注释
       val isNewLeader = !leaderReplicaIdOpt.contains(localBrokerId)
-      val curLeaderLogEndOffset = leaderReplica.logEndOffset.messageOffset
+
+      val curLeaderLogEndOffset = leaderReplica.logEndOffset.messageOffset // leader副本的LEO
       val curTimeMs = time.milliseconds
       // initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and lastFetchLeaderLogEndOffset.
-      // 本地之外的副本
+      // 更新副本的同步时间，LEO
       (assignedReplicas - leaderReplica).foreach { replica =>
         val lastCaughtUpTimeMs = if (inSyncReplicas.contains(replica)) curTimeMs else 0L
         replica.resetLastCaughtUpTime(curLeaderLogEndOffset, curTimeMs, lastCaughtUpTimeMs)
@@ -349,10 +352,12 @@ class Partition(val topic: String,
 
       if (isNewLeader) {
         // construct the high watermark metadata for the new leader replica
+        // 初始化HW(大概率就是当前的HW)
         leaderReplica.convertHWToLocalOffsetMetadata()
         // mark local replica as the leader after converting hw
         leaderReplicaIdOpt = Some(localBrokerId)
         // reset log end offset for remote replicas
+        // 初始化同步相关的一堆参数
         assignedReplicas.filter(_.brokerId != localBrokerId).foreach(_.updateLogReadResult(LogReadResult.UnknownLogReadResult))
       }
       // we may need to increment high watermark since ISR could be down to 1
@@ -360,6 +365,7 @@ class Partition(val topic: String,
     }
     // some delayed operations may be unblocked after HW changed
     if (leaderHWIncremented)
+      // HW增加了，fetch请求的max.byte，produce请求的ack=-1等待副本同步就可以try complete了，
       tryCompleteDelayedRequests()
     isNewLeader
   }
@@ -524,7 +530,8 @@ class Partition(val topic: String,
    *
    * 1. Partition ISR changed
    * 2. Any replica's LEO changed
-   *
+   * HW取决于ISR副本或即将追上的副本中最小的LEO，如果一个副本即将追上，但是它的LEO小于HW，我们会在更新HW之前等它跟上HW，
+   * 当在ISR中只有一个leader副本时，如果我们不这样做，follower副本会一直落后HW，而永远添加不进ISR
    * The HW is determined by the smallest log end offset among all replicas that are in sync or are considered caught-up.
    * This way, if a replica is considered caught-up, but its log end offset is smaller than HW, we will wait for this
    * replica to catch up to the HW before advancing the HW. This helps the situation when the ISR only includes the
@@ -537,20 +544,25 @@ class Partition(val topic: String,
    * since all callers of this private API acquire that lock
    */
   private def maybeIncrementLeaderHW(leaderReplica: Replica, curTime: Long = time.milliseconds): Boolean = {
+    // ISR或considered caught-up的副本
     val allLogEndOffsets = assignedReplicas.filter { replica =>
+      // 落后时间<=replica.lag.time.max.ms
       curTime - replica.lastCaughtUpTimeMs <= replicaManager.config.replicaLagTimeMaxMs || inSyncReplicas.contains(replica)
     }.map(_.logEndOffset)
-    val newHighWatermark = allLogEndOffsets.min(new LogOffsetMetadata.OffsetOrdering)
+    // 所有副本最小值
+    val newHighWatermark = allLogEndOffsets.min(new LogOffsetMetadata.OffsetOrdering) // 传的是一个比较器
     val oldHighWatermark = leaderReplica.highWatermark
 
+    // 当前副本的hw比 min LEO小，或者(二者相等，但是后者已经在新的segment上了)
     // Ensure that the high watermark increases monotonically. We also update the high watermark when the new
     // offset metadata is on a newer segment, which occurs whenever the log is rolled to a new segment.
-    if (oldHighWatermark.messageOffset < newHighWatermark.messageOffset ||
+    if (oldHighWatermark.messageOffset < newHighWatermark.messageOffset ||  // 比较两者的segment baseOffset
       (oldHighWatermark.messageOffset == newHighWatermark.messageOffset && oldHighWatermark.onOlderSegment(newHighWatermark))) {
       leaderReplica.highWatermark = newHighWatermark
       debug(s"High watermark updated to $newHighWatermark")
       true
     } else {
+      // 所以说hw的更新不取决于传进来的oldHighWatermark，而是当面计算一次min LEO，如果它比oldHighWatermark大才更新
       def logEndOffsetString(r: Replica) = s"replica ${r.brokerId}: ${r.logEndOffset}"
       debug(s"Skipping update high watermark since new hw $newHighWatermark is not larger than old hw $oldHighWatermark. " +
         s"All current LEOs are ${assignedReplicas.map(logEndOffsetString)}")

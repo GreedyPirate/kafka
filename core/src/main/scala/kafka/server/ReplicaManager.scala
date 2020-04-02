@@ -1159,7 +1159,7 @@ class ReplicaManager(val config: KafkaConfig,
           }
         }
 
-        // 要变更的leader副本在当前broker
+        // 过滤出leader是当前broker的分区，*要将当前broker上的副本变为leader* 这句话最重要
         val partitionsTobeLeader = partitionState.filter { case (_, stateInfo) =>
           stateInfo.basePartitionState.leader == localBrokerId
         }

@@ -174,6 +174,7 @@ class Replica(val brokerId: Int,
    */
   def convertHWToLocalOffsetMetadata() {
     if (isLocal) {
+      // 在副本成为leader时，初始化HW为当前副本的HW
       highWatermarkMetadata = log.get.convertToOffsetMetadata(highWatermarkMetadata.messageOffset).getOrElse {
         log.get.convertToOffsetMetadata(logStartOffset).getOrElse {
           val firstSegmentOffset = log.get.logSegments.head.baseOffset
