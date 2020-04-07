@@ -113,6 +113,8 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, BrokerAndInitialOffset]) {
     lock synchronized {
+      // partitionsPerFetcher = Map[BrokerAndFetcherId, Map[TopicPartition, BrokerAndInitialOffset]]
+      // 就是按照
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case(topicPartition, brokerAndInitialFetchOffset) =>
         BrokerAndFetcherId(brokerAndInitialFetchOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))}
 

@@ -1191,6 +1191,7 @@ class ReplicaManager(val config: KafkaConfig,
 
         // we initialize highwatermark thread after the first leaderisrrequest. This ensures that all the partitions
         // have been completely populated before starting the checkpointing there by avoiding weird race conditions
+        // 为初始化的LeaderAndIsr请求启动hw的check线程，记录到recovery-point-offset-checkpoint文件
         if (!hwThreadInitialized) {
           startHighWaterMarksCheckPointThread()
           hwThreadInitialized = true
@@ -1199,6 +1200,7 @@ class ReplicaManager(val config: KafkaConfig,
         val newOnlineReplicas = newPartitions.flatMap(topicPartition => getReplica(topicPartition))
         // Add future replica to partition's map
         val futureReplicasAndInitialOffset = newOnlineReplicas.filter { replica =>
+          // 新副本就是isFuture副本
           logManager.getLog(replica.topicPartition, isFuture = true).isDefined
         }.map { replica =>
           replica.topicPartition -> BrokerAndInitialOffset(BrokerEndPoint(config.brokerId, "localhost", -1), replica.highWatermark.messageOffset)
@@ -1207,8 +1209,10 @@ class ReplicaManager(val config: KafkaConfig,
 
         // pause cleaning for partitions that are being moved and start ReplicaAlterDirThread to move replica from source dir to destination dir
         futureReplicasAndInitialOffset.keys.foreach(logManager.abortAndPauseCleaning)
+        // 为新副本开始同步，这里也就是为什么副本重分配那么慢
         replicaAlterLogDirsManager.addFetcherForPartitions(futureReplicasAndInitialOffset)
 
+        // 看是否有空闲的fetcher线程
         replicaFetcherManager.shutdownIdleFetcherThreads()
         replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
         onLeadershipChange(partitionsBecomeLeader, partitionsBecomeFollower)
@@ -1339,8 +1343,9 @@ class ReplicaManager(val config: KafkaConfig,
       partitionStates.foreach { case (partition, partitionStateInfo) =>
         val newLeaderBrokerId = partitionStateInfo.basePartitionState.leader
         try {
+          // 找到leader所在的broker
           metadataCache.getAliveBrokers.find(_.id == newLeaderBrokerId) match {
-            // Only change partition state when the leader is available
+            // Only change partition state when the leader is available leader必须存活
             case Some(_) =>
               if (partition.makeFollower(controllerId, partitionStateInfo, correlationId))
                 partitionsToMakeFollower += partition
@@ -1374,6 +1379,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
 
+      // leader要发生改变，不能再从以前的leader同步
       replicaFetcherManager.removeFetcherForPartitions(partitionsToMakeFollower.map(_.topicPartition))
       partitionsToMakeFollower.foreach { partition =>
         stateChangeLogger.trace(s"Stopped fetchers as part of become-follower request from controller $controllerId " +
@@ -1393,6 +1399,7 @@ class ReplicaManager(val config: KafkaConfig,
           s"controller $controllerId epoch $epoch with leader ${partitionStates(partition).basePartitionState.leader}")
       }
 
+      // broker在关闭了
       if (isShuttingDown.get()) {
         partitionsToMakeFollower.foreach { partition =>
           stateChangeLogger.trace(s"Skipped the adding-fetcher step of the become-follower state " +
@@ -1402,11 +1409,14 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
       else {
+        // 正常处理
         // we do not need to check if the leader exists again since this has been done at the beginning of this process
         val partitionsToMakeFollowerWithLeaderAndOffset = partitionsToMakeFollower.map(partition =>
+          // leader所在的broker和当前broker副本的HW作为初始同步位移
           partition.topicPartition -> BrokerAndInitialOffset(
             metadataCache.getAliveBrokers.find(_.id == partition.leaderReplicaIdOpt.get).get.brokerEndPoint(config.interBrokerListenerName),
             partition.getReplica().get.highWatermark.messageOffset)).toMap
+        // 添加到副本到同步线程
         replicaFetcherManager.addFetcherForPartitions(partitionsToMakeFollowerWithLeaderAndOffset)
 
         partitionsToMakeFollower.foreach { partition =>

@@ -374,7 +374,11 @@ class Partition(val topic: String,
    *  Make the local replica the follower by setting the new leader and ISR to empty
    *  If the leader replica id does not change and the new epoch is equal or one
    *  greater (that is, no updates have been missed), return false to indicate to the
-    * replica manager that state is already correct and the become-follower steps can be skipped
+   *  replica manager that state is already correct and the become-follower steps can be skipped
+   * @param controllerId
+   * @param partitionStateInfo
+   * @param correlationId
+   * @return leader是否更新了
    */
   def makeFollower(controllerId: Int, partitionStateInfo: LeaderAndIsrRequest.PartitionState, correlationId: Int): Boolean = {
     inWriteLock(leaderIsrUpdateLock) {
@@ -387,14 +391,17 @@ class Partition(val topic: String,
       // add replicas that are new
       newAssignedReplicas.foreach(r => getOrCreateReplica(r, partitionStateInfo.isNew))
       // remove assigned replicas that have been removed by the controller
+      // 删除缓存里不要的副本了
       (assignedReplicas.map(_.brokerId) -- newAssignedReplicas).foreach(removeReplica)
-      inSyncReplicas = Set.empty[Replica]
+
+      inSyncReplicas = Set.empty[Replica] // ISR为空 emm...
       leaderEpoch = partitionStateInfo.basePartitionState.leaderEpoch
       leaderEpochStartOffsetOpt = None
       zkVersion = partitionStateInfo.basePartitionState.zkVersion
 
       // If the leader is unchanged and the epochs are no more than one change apart, indicate that no follower changes are required
       // Otherwise, we missed a leader epoch update, which means the leader's log may have been truncated prior to the current epoch.
+      // leader是否更新了
       if (leaderReplicaIdOpt.contains(newLeaderBrokerId) && (leaderEpoch == oldLeaderEpoch || leaderEpoch == oldLeaderEpoch + 1)) {
         false
       }

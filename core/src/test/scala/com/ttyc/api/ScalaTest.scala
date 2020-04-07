@@ -2,6 +2,7 @@ package com.ttyc.api
 
 import java.util.Properties
 
+import org.apache.kafka.common.utils.Utils
 import org.junit.Test
 
 class ScalaTest {
@@ -86,6 +87,14 @@ class ScalaTest {
     overrides.put("size", Int(200))*/
 
 //    originals ++= overrides
+  }
+
+  @Test
+  def testFetcherId: Unit = {
+    val topic = "test";
+    val partitionId = 1;
+    val id = Utils.abs(31 * topic.hashCode() + partitionId) % 5
+    println(s"id = $id")
   }
 }
 
