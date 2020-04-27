@@ -210,11 +210,12 @@ public abstract class AbstractCoordinator implements Closeable {
 
         // 循环直至coordinator可用
         while (coordinatorUnknown()) {
-            // 查找coordinator
+            // 发送查找coordinator请求
             final RequestFuture<Void> future = lookupCoordinator();
-            // 一直发生请求，直到future返回结果
+            // 等待future返回结果
             client.poll(future, remainingTimeAtLeastZero(timeoutMs, elapsedTime));
             if (!future.isDone()) {
+                // 一直poll，直到超时
                 // ran out of time
                 break;
             }
@@ -296,8 +297,10 @@ public abstract class AbstractCoordinator implements Closeable {
             }
             // Awake the heartbeat thread if needed
             if (heartbeat.shouldHeartbeat(now)) {
+                // 通知消费者线程，看HeartbeatThread的run方法，锁的持有者是AbstractCoordinator.this，并且wait了
                 notify();
             }
+            // 记录lastPoll
             heartbeat.poll(now);
         }
     }
@@ -328,6 +331,10 @@ public abstract class AbstractCoordinator implements Closeable {
         return ensureActiveGroup(timeoutMs, time.milliseconds());
     }
 
+    /**
+     * 如果是第一次请求，需要rebalance达到STABLE状态
+     * 之后会跳过joinGroupIfNeeded里的while循环
+     */
     // Visible for testing
     boolean ensureActiveGroup(long timeoutMs, long startMs) {
         // always ensure that the coordinator is ready because we may have been disconnected
@@ -336,8 +343,9 @@ public abstract class AbstractCoordinator implements Closeable {
             return false;
         }
 
-        startHeartbeatThreadIfNeeded();
+        startHeartbeatThreadIfNeeded(); // 启动心跳线程
 
+        // join开始时间，和剩余的超时时间
         long joinStartMs = time.milliseconds();
         long joinTimeoutMs = remainingTimeAtLeastZero(timeoutMs, joinStartMs - startMs);
         return joinGroupIfNeeded(joinTimeoutMs, joinStartMs);
@@ -384,7 +392,7 @@ public abstract class AbstractCoordinator implements Closeable {
     boolean joinGroupIfNeeded(final long timeoutMs, final long startTimeMs) {
         long elapsedTime = 0L;
 
-        while (rejoinNeededOrPending()) {
+        while (rejoinNeededOrPending()) { // 第一次为true   不用判断超时吗？
             if (!ensureCoordinatorReady(remainingTimeAtLeastZero(timeoutMs, elapsedTime))) {
                 return false;
             }
@@ -395,43 +403,56 @@ public abstract class AbstractCoordinator implements Closeable {
             // on each iteration of the loop because an event requiring a rebalance (such as a metadata
             // refresh which changes the matched subscription set) can occur while another rebalance is
             // still in progress.
-            if (needsJoinPrepare) {
+            if (needsJoinPrepare) { // 第一次为true，generation=Generation.NO_GENERATION
+                // 主要是触发ConsumerRebalanceListener，如果自动提交为true，尝试提交
                 onJoinPrepare(generation.generationId, generation.memberId);
                 needsJoinPrepare = false;
             }
 
+            // 第一次加入组 future是JoinGroup请求返回的分配方案
+            // initiateJoinGroup里面会把rejoinNeeded置为false，如果本次rebalance成功了，就会推出当前的while循环
             final RequestFuture<ByteBuffer> future = initiateJoinGroup();
             client.poll(future, remainingTimeAtLeastZero(timeoutMs, elapsedTime));
+            // 无论请求成功还是失败，都还没拿到，说明超时了啊
             if (!future.isDone()) {
                 // we ran out of time
                 return false;
             }
 
+            // 请求成功
             if (future.succeeded()) {
                 // Duplicate the buffer in case `onJoinComplete` does not complete and needs to be retried.
                 ByteBuffer memberAssignment = future.value().duplicate();
+
+                // 初始化分区消费(拉取)状态，更新缓存数据
+                // 执行回调 PartitionAssignor#onAssignment, ConsumerRebalanceListener#onPartitionsAssigned
                 onJoinComplete(generation.generationId, generation.memberId, generation.protocol, memberAssignment);
 
                 // We reset the join group future only after the completion callback returns. This ensures
                 // that if the callback is woken up, we will retry it on the next joinGroupIfNeeded.
-                resetJoinGroupFuture();
+                resetJoinGroupFuture(); // joinFuture重置为null
                 needsJoinPrepare = true;
             } else {
                 resetJoinGroupFuture();
                 final RuntimeException exception = future.exception();
+
+                // 这三种异常会再次尝试rebalance
                 if (exception instanceof UnknownMemberIdException ||
                         exception instanceof RebalanceInProgressException ||
                         exception instanceof IllegalGenerationException)
                     continue;
-                else if (!future.isRetriable())
+                else if (!future.isRetriable()) // 其他的抛异常
                     throw exception;
+                // 重试的back off
                 time.sleep(retryBackoffMs);
             }
 
+            // 计算已用时间, 正常情况下进不到if，elapsedTime也只是为了计算多次失败的耗时
             if (rejoinNeededOrPending()) {
                 elapsedTime = time.milliseconds() - startTimeMs;
             }
         }
+        // 不需要rebalance，直接返回true
         return true;
     }
 
@@ -451,6 +472,7 @@ public abstract class AbstractCoordinator implements Closeable {
             // fence off the heartbeat thread explicitly so that it cannot interfere with the join group.
             // Note that this must come after the call to onJoinPrepare since we must be able to continue
             // sending heartbeats if that callback takes some time.
+            // 先暂停了心跳线程
             disableHeartbeatThread();
 
             state = MemberState.REBALANCING;
@@ -462,9 +484,11 @@ public abstract class AbstractCoordinator implements Closeable {
                     // even if the consumer is woken up before finishing the rebalance
                     synchronized (AbstractCoordinator.this) {
                         log.info("Successfully joined group with generation {}", generation.generationId);
-                        state = MemberState.STABLE;
-                        rejoinNeeded = false;
+                        // 跟新2个很重要的
+                        state = MemberState.STABLE; // 消费者Stable
+                        rejoinNeeded = false; // 退出外层循环的标志位
 
+                        // 前面停止的心跳线程也重新启动了
                         if (heartbeatThread != null)
                             heartbeatThread.enable();
                     }
@@ -502,7 +526,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 groupId,
                 this.sessionTimeoutMs,
                 this.generation.memberId,
-                protocolType(),
+                protocolType(), // consumer
                 metadata()).setRebalanceTimeout(this.rebalanceTimeoutMs);
 
         log.debug("Sending JoinGroup ({}) to coordinator {}", requestBuilder, this.coordinator);
@@ -577,6 +601,11 @@ public abstract class AbstractCoordinator implements Closeable {
         return sendSyncGroupRequest(requestBuilder);
     }
 
+    /**
+     * leader制定分配方案，并发送SyncGroupRequest
+     * @param joinResponse
+     * @return
+     */
     private RequestFuture<ByteBuffer> onJoinLeader(JoinGroupResponse joinResponse) {
         try {
             // perform the leader synchronization and send back the assignment for the group
@@ -660,7 +689,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 synchronized (AbstractCoordinator.this) {
                     // use MAX_VALUE - node.id as the coordinator id to allow separate connections
                     // for the coordinator in the underlying network client layer
-                    // coordinatorConnectionId是计算出来的，而且是幂等的，感觉是个技巧性的代码
+                    // connectionId(nodeId)是计算出来的，注释说是在network client层区分coordinator
                     int coordinatorConnectionId = Integer.MAX_VALUE - findCoordinatorResponse.node().id();
                     // 初始化coordinator：connectionId，ip和端口
                     AbstractCoordinator.this.coordinator = new Node(
@@ -670,7 +699,7 @@ public abstract class AbstractCoordinator implements Closeable {
                     log.info("Discovered group coordinator {}", coordinator);
                     // 这里应该是向coordinator所在的机器的Acceptor发送OP_CONNECT请求了
                     client.tryConnect(coordinator);
-                    // 链接成功，相当于一次heartbeat
+                    // 链接成功，lastPoll设置为now
                     heartbeat.resetTimeouts(time.milliseconds());
                 }
                 future.complete(null);
@@ -1035,6 +1064,7 @@ public abstract class AbstractCoordinator implements Closeable {
                             // probably make sure the coordinator is still healthy.
                             markCoordinatorUnknown();
                         } else if (heartbeat.pollTimeoutExpired(now)) {
+                            //
                             // the poll timeout has expired, which means that the foreground thread has stalled
                             // in between calls to poll(), so we explicitly leave the group.
                             maybeLeaveGroup();

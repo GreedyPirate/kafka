@@ -208,8 +208,10 @@ public final class Metadata implements Closeable {
      */
     public synchronized void setTopics(Collection<String> topics) {
         if (!this.topics.keySet().containsAll(topics)) {
+            // 下次请求更新 新topic
             requestUpdateForNewTopics();
         }
+        // 替换
         this.topics.clear();
         for (String topic : topics)
             this.topics.put(topic, TOPIC_EXPIRY_NEEDS_UPDATE);

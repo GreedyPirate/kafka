@@ -233,6 +233,8 @@ public interface RecordBatch extends Iterable<Record> {
     CloseableIterator<Record> streamingIterator(BufferSupplier decompressionBufferSupplier);
 
     /**
+     *
+     * 事务控制消息，COMMIT和ABORT两种
      * Check whether this is a control batch (i.e. whether the control bit is set in the batch attributes).
      * For magic versions prior to 2, this is always false.
      *

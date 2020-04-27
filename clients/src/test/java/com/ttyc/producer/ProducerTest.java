@@ -9,7 +9,7 @@ import java.util.Properties;
 
 public class ProducerTest {
     public static void main(String[] args) throws InterruptedException {
-        send("test-3");
+        send("test-1");
     }
 
     public static void send (String topic) {

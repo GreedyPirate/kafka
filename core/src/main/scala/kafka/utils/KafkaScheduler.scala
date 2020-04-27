@@ -108,6 +108,7 @@ class KafkaScheduler(val threads: Int,
         .format(name, TimeUnit.MILLISECONDS.convert(delay, unit), TimeUnit.MILLISECONDS.convert(period, unit)))
     this synchronized {
       ensureRunning()
+      // new Runnable
       val runnable = CoreUtils.runnable {
         try {
           trace("Beginning execution of scheduled task '%s'.".format(name))

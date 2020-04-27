@@ -967,7 +967,9 @@ class Log(@volatile var dir: File,
         checkIfMemoryMappedBufferClosed()
         if (newLogStartOffset > logStartOffset) {
           info(s"Incrementing log start offset to $newLogStartOffset")
+          // 更新follower自己的logStartOffset为leader的logStartOffset
           logStartOffset = newLogStartOffset
+          // leader epoch的截断
           _leaderEpochCache.truncateFromStart(logStartOffset)
           producerStateManager.truncateHead(logStartOffset)
           updateFirstUnstableOffset()

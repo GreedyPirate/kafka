@@ -59,7 +59,9 @@ private[group] class InitialDelayedJoin(coordinator: GroupCoordinator,
 
   override def onComplete(): Unit = {
     group.inLock  {
+      // 是继续等待还是直接结束DelayedJoin
       if (group.newMemberAdded && remainingMs != 0) {
+        // 这里置为false也很有意思，就是说来一个消费者，newMemberAdded又会变为true
         group.newMemberAdded = false
         val delay = min(configuredRebalanceDelay, remainingMs)
         val remaining = max(remainingMs - delayMs, 0)

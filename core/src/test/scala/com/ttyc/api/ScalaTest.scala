@@ -2,8 +2,13 @@ package com.ttyc.api
 
 import java.util.Properties
 
+import kafka.cluster.BrokerEndPoint
+import kafka.server.BrokerIdAndFetcherId
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
 import org.junit.Test
+
+import scala.collection.mutable
 
 class ScalaTest {
 
@@ -96,7 +101,51 @@ class ScalaTest {
     val id = Utils.abs(31 * topic.hashCode() + partitionId) % 5
     println(s"id = $id")
   }
+
+  @Test
+  def testGroupbyBrokerAndFetcher ={
+    val fetchMap = Map(
+      new TopicPartition("test",0) -> BrokerIdAndInitialOffset(0, 100),
+      new TopicPartition("test",0) -> BrokerIdAndInitialOffset(1, 300),
+      new TopicPartition("test",2) -> BrokerIdAndInitialOffset(1, 400),
+      new TopicPartition("test",3) -> BrokerIdAndInitialOffset(1, 500),
+      new TopicPartition("test",4) -> BrokerIdAndInitialOffset(0, 600),
+      new TopicPartition("test",5) -> BrokerIdAndInitialOffset(2, 700),
+      new TopicPartition("test",6) -> BrokerIdAndInitialOffset(0, 800)
+    )
+    var partitionsPerBroker = fetchMap.groupBy({case (topicPartition, brokerIdAndInitialOffset) =>
+      BrokerIdAndFetcherId(brokerIdAndInitialOffset.brokerId, getFetchId(topicPartition.topic(), topicPartition.partition()))
+    })
+
+    for (elem <- partitionsPerBroker) {
+      val brokerFetchId = elem._1
+      println(s"$brokerFetchId ----->")
+      elem._2.foreach(entry => {
+        val tp = entry._1
+        val brokerOffset = entry._2
+        println(s"$tp ===== $brokerOffset")
+      })
+
+      println("===========================")
+    }
+  }
+
+  def getFetchId(topic: String, partitionId: Int) :Int ={
+    Utils.abs(31 * topic.hashCode() + partitionId) % 5
+  }
+
+  @Test
+  def testLeaderEpochs: Unit = {
+    val leadersEpoch = Seq(1,2,3,4,5);
+    val followerEpoch = 3;
+
+    val (subsequent, previous) = leadersEpoch.partition(e => e > followerEpoch)
+    println(s"subsequent is empty? ${subsequent.isEmpty}, subsequent is $subsequent, previous is empty ${previous.isEmpty}, previous is $previous")
+
+  }
 }
+
+case class BrokerIdAndInitialOffset(brokerId: Int, initOffset: Long)
 
 case class PartitionReplica(partition: String, replica: Int) {
 

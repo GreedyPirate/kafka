@@ -571,6 +571,7 @@ class LogSegment private[log] (val log: FileRecords,
    */
   def findOffsetByTimestamp(timestamp: Long, startingOffset: Long = baseOffset): Option[TimestampOffset] = {
     // Get the index entry with a timestamp less than or equal to the target timestamp
+
     val timestampOffset = timeIndex.lookup(timestamp)
     val position = offsetIndex.lookup(math.max(timestampOffset.offset, startingOffset)).position
 

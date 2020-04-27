@@ -205,8 +205,8 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
     assert(supportsProtocols(member.protocols))
 
     if (leaderId.isEmpty)
-      leaderId = Some(member.memberId)
-    members.put(member.memberId, member)
+      leaderId = Some(member.memberId)   // 来的第一个就是leader ...
+    members.put(member.memberId, member) // memberId为key MemberMetadata为value
   }
 
   def remove(memberId: String) {
@@ -235,7 +235,7 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
   // TODO: decide if ids should be predictable or random
   def generateMemberIdSuffix = UUID.randomUUID().toString
 
-  def canRebalance = GroupMetadata.validPreviousStates(PreparingRebalance).contains(state)
+  def canRebalance = GroupMetadata.validPreviousStates(PreparingRebalance).contains(state) // previousStates: Stable, CompletingRebalance, Empty
 
   def transitionTo(groupState: GroupState) {
     assertValidTransition(groupState)
@@ -267,7 +267,7 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
   }
 
   def supportsProtocols(memberProtocols: Set[String]) = {
-    members.isEmpty || (memberProtocols & candidateProtocols).nonEmpty
+    members.isEmpty || (memberProtocols & candidateProtocols).nonEmpty //判断assignor members为空，说明是第一个member，或者已有的包含了该协议
   }
 
   def initNextGeneration() = {

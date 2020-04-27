@@ -93,6 +93,7 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
   // Visibility for testing
   private[server] def getFetcherId(topic: String, partitionId: Int) : Int = {
     lock synchronized {
+      // 注意这里是取余，其实就是为一个分区分配一个同步线程
       Utils.abs(31 * topic.hashCode() + partitionId) % numFetchersPerBroker
     }
   }
@@ -114,7 +115,7 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, BrokerAndInitialOffset]) {
     lock synchronized {
       // partitionsPerFetcher = Map[BrokerAndFetcherId, Map[TopicPartition, BrokerAndInitialOffset]]
-      // 就是按照
+      // 分组的key是目标broker+同步线程，也就是同一个fetcher线程向同一个broker同步 为一组
       val partitionsPerFetcher = partitionAndOffsets.groupBy { case(topicPartition, brokerAndInitialFetchOffset) =>
         BrokerAndFetcherId(brokerAndInitialFetchOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))}
 
@@ -126,13 +127,19 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
 
       for ((brokerAndFetcherId, initialFetchOffsets) <- partitionsPerFetcher) {
         val brokerIdAndFetcherId = BrokerIdAndFetcherId(brokerAndFetcherId.broker.id, brokerAndFetcherId.fetcherId)
+        // fetcherThreadMap: Map[BrokerIdAndFetcherId, AbstractFetcherThread]
+        // 这里的逻辑还是很清晰的
         fetcherThreadMap.get(brokerIdAndFetcherId) match {
+            // 已存在对应的Thread，并且线程的broker和分区要同步的broker相同，直接复用就行了
           case Some(f) if f.sourceBroker.host == brokerAndFetcherId.broker.host && f.sourceBroker.port == brokerAndFetcherId.broker.port =>
             // reuse the fetcher thread
           case Some(f) =>
+            // 如果前面的if不成立，就需要关闭，重新添加并启动
             f.shutdown()
             addAndStartFetcherThread(brokerAndFetcherId, brokerIdAndFetcherId)
           case None =>
+            // 没有就创建
+            // 这里和fetcherThreadMap，num.replica.fetchers，getFetcherId共同完成了对线程数的控制
             addAndStartFetcherThread(brokerAndFetcherId, brokerIdAndFetcherId)
         }
 

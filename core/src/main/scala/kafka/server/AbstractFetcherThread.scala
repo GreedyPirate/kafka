@@ -101,10 +101,13 @@ abstract class AbstractFetcherThread(name: String,
 
   override def doWork() {
     maybeTruncate()
+    // 构建fetch请求
     val fetchRequest = inLock(partitionMapLock) {
+      // 构建fetchRequest
       val ResultWithPartitions(fetchRequest, partitionsWithError) = buildFetchRequest(states)
       if (fetchRequest.isEmpty) {
         trace(s"There are no active partitions. Back off for $fetchBackOffMs ms before sending a fetch request")
+        // replica.fetch.backoff.ms
         partitionMapCond.await(fetchBackOffMs, TimeUnit.MILLISECONDS)
       }
       handlePartitionsWithErrors(partitionsWithError)
@@ -115,6 +118,7 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
+    * 对要同步的分区副本发起LeaderEpochRequeust
     * - Build a leader epoch fetch based on partitions that are in the Truncating phase
     * - Issue LeaderEpochRequeust, retrieving the latest offset for each partition's
     *   leader epoch. This is the offset the follower should truncate to ensure
@@ -124,15 +128,19 @@ abstract class AbstractFetcherThread(name: String,
     *   occur during truncation.
     */
   def maybeTruncate(): Unit = {
+    // 获取本地每一个分区副本记录的epoch，即leader-epoch-checkpoint文件最后一个epoch
     val ResultWithPartitions(epochRequests, partitionsWithError) = inLock(partitionMapLock) { buildLeaderEpochRequest(states) }
+    // 处理没有leader epoch的分区
     handlePartitionsWithErrors(partitionsWithError)
 
     if (epochRequests.nonEmpty) {
+      // 每个分区当前leader的LEO
       val fetchedEpochs = fetchEpochsFromLeader(epochRequests)
       //Ensure we hold a lock during truncation.
       inLock(partitionMapLock) {
         //Check no leadership changes happened whilst we were unlocked, fetching epochs
         val leaderEpochs = fetchedEpochs.filter { case (tp, _) => partitionStates.contains(tp) }
+        // 实现类的maybeTruncate
         val ResultWithPartitions(fetchOffsets, partitionsWithError) = maybeTruncate(leaderEpochs)
         handlePartitionsWithErrors(partitionsWithError)
         updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets)
@@ -166,6 +174,7 @@ abstract class AbstractFetcherThread(name: String,
       // process fetched data
       inLock(partitionMapLock) {
 
+
         responseData.foreach { case (topicPartition, partitionData) =>
           val topic = topicPartition.topic
           val partitionId = topicPartition.partition
@@ -178,18 +187,23 @@ abstract class AbstractFetcherThread(name: String,
                 case Errors.NONE =>
                   try {
                     val records = partitionData.toRecords
+                    // 获取最后一个消息的nextOffset，作为下次新的fetchOffset，没有则依然以当前的为准
                     val newOffset = records.batches.asScala.lastOption.map(_.nextOffset).getOrElse(
                       currentPartitionFetchState.fetchOffset)
 
+                    // 更新lag，如果lag<=0，说明是inSync的
                     fetcherLagStats.getAndMaybePut(topic, partitionId).lag = Math.max(0L, partitionData.highWatermark - newOffset)
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
+                    // 分区，拉取时的fetchOffset，拉取的结果数据
                     processPartitionData(topicPartition, currentPartitionFetchState.fetchOffset, partitionData)
 
                     val validBytes = records.validBytes
                     // ReplicaDirAlterThread may have removed topicPartition from the partitionStates after processing the partition data
                     if (validBytes > 0 && partitionStates.contains(topicPartition)) {
+                      // 更新分区的PartitionState
                       // Update partitionStates only if there is no exception during processPartitionData
                       partitionStates.updateAndMoveToEnd(topicPartition, new PartitionFetchState(newOffset))
+                      // metrics ...
                       fetcherStats.byteRate.mark(validBytes)
                     }
                   } catch {
@@ -253,10 +267,14 @@ abstract class AbstractFetcherThread(name: String,
     } finally partitionMapLock.unlock()
   }
 
+  /**
+    * tp和initialFetchOffset
+    */
   def addPartitions(initialFetchOffsets: Map[TopicPartition, Long]) {
     partitionMapLock.lockInterruptibly()
     try {
       // If the partitionMap already has the topic/partition, then do not update the map with the old offset
+      // 如果partitionStates已经有了该分区的PartitionFetchState，就用以前的fetchOffset
       val newPartitionToState = initialFetchOffsets.filter { case (tp, _) =>
         !partitionStates.contains(tp)
       }.map { case (tp, initialFetchOffset) =>
@@ -267,8 +285,11 @@ abstract class AbstractFetcherThread(name: String,
             new PartitionFetchState(initialFetchOffset, includeLogTruncation)
         tp -> fetchState
       }
+      // List[PartitionStates.PartitionState[PartitionFetchState]]
       val existingPartitionToState = states().toMap
+      // 原来的+新的，更新到缓存里
       partitionStates.set((existingPartitionToState ++ newPartitionToState).asJava)
+      // 唤醒为空时等待的地方
       partitionMapCond.signalAll()
     } finally partitionMapLock.unlock()
   }
@@ -338,6 +359,7 @@ abstract class AbstractFetcherThread(name: String,
     } else {
       // get (leader epoch, end offset) pair that corresponds to the largest leader epoch
       // less than or equal to the requested epoch.
+      // 本地副本中的leader epoch和LEO
       val (followerEpoch, followerEndOffset) = replica.epochs.get.endOffsetFor(leaderEpochOffset.leaderEpoch)
       if (followerEndOffset == UNDEFINED_EPOCH_OFFSET) {
         // This can happen if the follower was not tracking leader epochs at that point (before the
@@ -357,7 +379,8 @@ abstract class AbstractFetcherThread(name: String,
              s"unknown to the $followerName for ${replica.topicPartition}. " +
              s"Will truncate to $intermediateOffsetToTruncateTo and send another leader epoch request to the leader.")
         OffsetTruncationState(intermediateOffsetToTruncateTo, truncationCompleted = false)
-      } else {
+      } else {// followerEpoch = leaderEpoch
+        // 应该是二者LEO较小值
         val offsetToTruncateTo = min(followerEndOffset, leaderEpochOffset.endOffset)
         OffsetTruncationState(min(offsetToTruncateTo, replica.logEndOffset.messageOffset), truncationCompleted = true)
       }
@@ -504,6 +527,7 @@ case class ClientIdTopicPartition(clientId: String, topic: String, partitionId: 
 /**
   * case class to keep partition offset and its state(truncatingLog, delayed)
   * This represents a partition as being either:
+  *  截断日志，例如从leader变成了follower
   * (1) Truncating its log, for example having recently become a follower
   * (2) Delayed, for example due to an error, where we subsequently back off a bit
   * (3) ReadyForFetch, the is the active state where the thread is actively fetching data.

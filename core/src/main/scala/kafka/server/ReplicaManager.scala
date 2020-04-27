@@ -828,6 +828,7 @@ class ReplicaManager(val config: KafkaConfig,
                     quota: ReplicaQuota = UnboundedQuota,
                     responseCallback: Seq[(TopicPartition, FetchPartitionData)] => Unit,
                     isolationLevel: IsolationLevel) {
+    // replicaId就是brokerId，所以肯定>=0
     val isFromFollower = Request.isValidBrokerId(replicaId)
     val fetchOnlyFromLeader = replicaId != Request.DebuggingConsumerId && replicaId != Request.FutureLocalReplicaId // 还有不从leader同步的？
     // follower fetch时没有高水位线的限制
@@ -1079,6 +1080,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   def maybeUpdateMetadataCache(correlationId: Int, updateMetadataRequest: UpdateMetadataRequest) : Seq[TopicPartition] =  {
     replicaStateChangeLock synchronized {
+      // 来自过期的broker
       if(updateMetadataRequest.controllerEpoch < controllerEpoch) {
         val stateControllerEpochErrorMessage = s"Received update metadata request with correlation id $correlationId " +
           s"from an old controller ${updateMetadataRequest.controllerId} with epoch ${updateMetadataRequest.controllerEpoch}. " +
@@ -1087,6 +1089,7 @@ class ReplicaManager(val config: KafkaConfig,
         throw new ControllerMovedException(stateChangeLogger.messageWithPrefix(stateControllerEpochErrorMessage))
       } else {
         val deletedPartitions = metadataCache.updateCache(correlationId, updateMetadataRequest)
+        // 更新
         controllerEpoch = updateMetadataRequest.controllerEpoch
         deletedPartitions
       }
@@ -1203,13 +1206,13 @@ class ReplicaManager(val config: KafkaConfig,
           // 新副本就是isFuture副本
           logManager.getLog(replica.topicPartition, isFuture = true).isDefined
         }.map { replica =>
+          // TODO BrokerAndInitialOffset这里是个谜
           replica.topicPartition -> BrokerAndInitialOffset(BrokerEndPoint(config.brokerId, "localhost", -1), replica.highWatermark.messageOffset)
         }.toMap
         futureReplicasAndInitialOffset.keys.foreach(tp => getPartition(tp).get.getOrCreateReplica(Request.FutureLocalReplicaId))
 
         // pause cleaning for partitions that are being moved and start ReplicaAlterDirThread to move replica from source dir to destination dir
         futureReplicasAndInitialOffset.keys.foreach(logManager.abortAndPauseCleaning)
-        // 为新副本开始同步，这里也就是为什么副本重分配那么慢
         replicaAlterLogDirsManager.addFetcherForPartitions(futureReplicasAndInitialOffset)
 
         // 看是否有空闲的fetcher线程
@@ -1448,6 +1451,7 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   *  leader也会保存follower的fetch state？
    * Update the follower's fetch state in the leader based on the last fetch request and update `readResult`,
    * if the follower replica is not recognized to be one of the assigned replicas. Do not update
    * `readResult` otherwise, so that log start/end offset and high watermark is consistent with
@@ -1591,6 +1595,7 @@ class ReplicaManager(val config: KafkaConfig,
           if (partition eq ReplicaManager.OfflinePartition)
             new EpochEndOffset(KAFKA_STORAGE_ERROR, UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET)
           else
+            // leaderEpoch是请求中的，也就是follower副本的leaderEpoch
             partition.lastOffsetForLeaderEpoch(leaderEpoch)
         case None =>
           new EpochEndOffset(UNKNOWN_TOPIC_OR_PARTITION, UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET)

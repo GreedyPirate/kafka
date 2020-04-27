@@ -184,6 +184,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   private def truncateToEntries(entries: Int) {
     inLock(lock) {
       _entries = entries
+      // mmap也是ByteBuffer，所以只要修改position属性就行了
       mmap.position(_entries * entrySize)
       _lastOffset = lastEntry.offset
     }

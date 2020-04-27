@@ -122,6 +122,7 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
           // a follower is on the older message format where leader epochs are not recorded
           (UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET)
         } else if (requestedEpoch == latestEpoch) {
+          // 如果follower副本的leader epoch就是当前leader副本的leader epoch，直接返回当前的LEO
           // For the leader, the latest epoch is always the current leader epoch that is still being written to.
           // Followers should not have any reason to query for the end offset of the current epoch, but a consumer
           // might if it is verifying its committed offset following a group rebalance. In this case, we return
@@ -129,6 +130,7 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
           (requestedEpoch, logEndOffset())
         } else {
           val (subsequentEpochs, previousEpochs) = epochs.partition { e => e.epoch > requestedEpoch}
+          // leader副本的leader epoch没有比follower副本leader epoch大的, 如果没有，属于异常情况
           if (subsequentEpochs.isEmpty) {
             // The requested epoch is larger than any known epoch. This case should never be hit because
             // the latest cached epoch is always the largest.
@@ -139,10 +141,12 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
             // epochs in between, but the point is that the data has already been removed from the log
             // and we want to ensure that the follower can replicate correctly beginning from the leader's
             // start offset.
+            // 返回leader副本中第一个比requestedEpoch大的offset
             (requestedEpoch, subsequentEpochs.head.startOffset)
           } else {
             // We have at least one previous epoch and one subsequent epoch. The result is the first
             // prior epoch and the starting offset of the first subsequent epoch.
+            // 比requestedEpoch小的最大一个epoch，以及比requestedEpoch大的第一个的offset
             (previousEpochs.last.epoch, subsequentEpochs.head.startOffset)
           }
         }

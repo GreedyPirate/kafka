@@ -113,6 +113,7 @@ class GroupCoordinator(val brokerId: Int,
       return
     }
 
+    // sessionTimeoutMs默认必须在6000-300000 即6s-5min之间
     if (sessionTimeoutMs < groupConfig.groupMinSessionTimeoutMs ||
       sessionTimeoutMs > groupConfig.groupMaxSessionTimeoutMs) {
       responseCallback(joinError(memberId, Errors.INVALID_SESSION_TIMEOUT))
@@ -120,17 +121,22 @@ class GroupCoordinator(val brokerId: Int,
       // only try to create the group if the group is not unknown AND
       // the member id is UNKNOWN, if member is specified but group does not
       // exist we should reject the request
+      // 第一个组消费者来这 group不存在并且member id=""，那么会创建group，然后调用doJoinGroup
+      // 之后的组消费者之间走doJoinGroup
       groupManager.getGroup(groupId) match {
         case None =>
+          // memberId已存在，group为空，只能说明是错误的请求
           if (memberId != JoinGroupRequest.UNKNOWN_MEMBER_ID) {
             responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID))
           } else {
+            // kafka启动的时候会加载所有已存在的group信息
+            // 新建一个GroupMetadata，并且GroupState为Empty，之后添加到groupManager的groupMetadataCache
             val group = groupManager.addGroup(new GroupMetadata(groupId, initialState = Empty))
             doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
           }
 
         case Some(group) =>
-          doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
+            doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
       }
     }
   }
@@ -156,6 +162,7 @@ class GroupCoordinator(val brokerId: Int,
         // it reset its member id and retry
         responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID))
       } else {
+        // 前面的都是错误校验
         group.currentState match {
           case Dead =>
             // if the group is marked as dead, it means some other thread has just removed the group
@@ -523,6 +530,7 @@ class GroupCoordinator(val brokerId: Int,
   def handleFetchOffsets(groupId: String, partitions: Option[Seq[TopicPartition]] = None):
   (Errors, Map[TopicPartition, OffsetFetchResponse.PartitionData]) = {
 
+    // 先保证group是正常的
     validateGroupStatus(groupId, ApiKeys.OFFSET_FETCH) match {
       case Some(error) => error -> Map.empty
       case None =>
@@ -578,7 +586,7 @@ class GroupCoordinator(val brokerId: Int,
    * Check that the groupId is valid, assigned to this coordinator and that the group has been loaded.
    */
   private def validateGroupStatus(groupId: String, api: ApiKeys): Option[Errors] = {
-    if (!isValidGroupId(groupId, api))
+    if (!isValidGroupId(groupId, api)) // gruopId !=null && != ""
       Some(Errors.INVALID_GROUP_ID)
     else if (!isActive.get)
       Some(Errors.COORDINATOR_NOT_AVAILABLE)
@@ -627,10 +635,18 @@ class GroupCoordinator(val brokerId: Int,
     }
   }
 
+  /**
+    * 迁入
+    * @param offsetTopicPartitionId
+    */
   def handleGroupImmigration(offsetTopicPartitionId: Int) {
     groupManager.scheduleLoadGroupAndOffsets(offsetTopicPartitionId, onGroupLoaded)
   }
 
+  /**
+    * 迁出
+    * @param offsetTopicPartitionId
+    */
   def handleGroupEmigration(offsetTopicPartitionId: Int) {
     groupManager.removeGroupsForPartition(offsetTopicPartitionId, onGroupUnloaded)
   }
@@ -701,11 +717,15 @@ class GroupCoordinator(val brokerId: Int,
                                     protocols: List[(String, Array[Byte])],
                                     group: GroupMetadata,
                                     callback: JoinCallback) = {
+    // memberId = clientId-UUID
     val memberId = clientId + "-" + group.generateMemberIdSuffix
+    // 组成员的元信息
     val member = new MemberMetadata(memberId, group.groupId, clientId, clientHost, rebalanceTimeoutMs,
       sessionTimeoutMs, protocolType, protocols)
+    // 在DelayedJoin的onComplete中执行
     member.awaitingJoinCallback = callback
     // update the newMemberAdded flag to indicate that the join group can be further delayed
+    // 我理解是第一个消费者
     if (group.is(PreparingRebalance) && group.generationId == 0)
       group.newMemberAdded = true
 
@@ -744,7 +764,7 @@ class GroupCoordinator(val brokerId: Int,
         max(group.rebalanceTimeoutMs - groupConfig.groupInitialRebalanceDelayMs, 0))
     else
       new DelayedJoin(this, group, group.rebalanceTimeoutMs)
-
+    // 从Empty转变为PreparingRebalance
     group.transitionTo(PreparingRebalance)
 
     info(s"Preparing to rebalance group ${group.groupId} with old generation ${group.generationId} " +

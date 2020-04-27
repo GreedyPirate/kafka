@@ -17,6 +17,7 @@
 package org.apache.kafka.clients.consumer.internals;
 
 /**
+ * 这只是一个VO类
  * A helper class for managing the heartbeat to the coordinator
  */
 public final class Heartbeat {
@@ -25,7 +26,9 @@ public final class Heartbeat {
     private final int maxPollIntervalMs;
     private final long retryBackoffMs;
 
+    // 上一次心跳发送时间，volatile用于监控读取
     private volatile long lastHeartbeatSend; // volatile since it is read by metrics
+    // 上一次心跳响应接收时间
     private long lastHeartbeatReceive;
     private long lastSessionReset;
     private long lastPoll;
@@ -69,21 +72,30 @@ public final class Heartbeat {
         return this.lastHeartbeatSend;
     }
 
+    /**
+     * 计算距离下一次心跳的剩余时间，比如还有3秒就要做下一次心跳
+     */
     public long timeToNextHeartbeat(long now) {
+        // 距离上一次心跳的时间
         long timeSinceLastHeartbeat = now - Math.max(lastHeartbeatSend, lastSessionReset);
+
+        // 计划下一次心跳的时间
         final long delayToNextHeartbeat;
         if (heartbeatFailed)
             delayToNextHeartbeat = retryBackoffMs;
         else
             delayToNextHeartbeat = heartbeatIntervalMs;
 
+        // 已经超出了计划心跳时间
         if (timeSinceLastHeartbeat > delayToNextHeartbeat)
             return 0;
         else
+            // 按计划还有几秒进行下一次心跳
             return delayToNextHeartbeat - timeSinceLastHeartbeat;
     }
 
     public boolean sessionTimeoutExpired(long now) {
+        // 距离上次发送心跳成功的时间 是否大于sessionTimeout
         return now - Math.max(lastSessionReset, lastHeartbeatReceive) > sessionTimeoutMs;
     }
 
@@ -98,6 +110,7 @@ public final class Heartbeat {
     }
 
     public boolean pollTimeoutExpired(long now) {
+        // maxPollInterval是否过期
         return now - lastPoll > maxPollIntervalMs;
     }
 

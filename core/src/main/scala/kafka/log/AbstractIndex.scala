@@ -306,6 +306,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
 
   /**
    * Lookup lower and upper bounds for the given target.
+    * offset索引和时间索引都是用的二分查找
    */
   private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
     // check if the index is empty

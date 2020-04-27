@@ -164,11 +164,13 @@ public class ConsumerNetworkClient implements Closeable {
             AuthenticationException ex = this.metadata.getAndClearAuthenticationException();
             if (ex != null)
                 throw ex;
-        } while (this.metadata.version() == version && time.milliseconds() - startMs < timeout);
+        } while (this.metadata.version() == version && time.milliseconds() - startMs < timeout); // version没被更新或者为超时
+        // version大于之前的version说明更新成功
         return this.metadata.version() > version;
     }
 
     /**
+     * // 保证元数据已被刷新，如果needUpdate为true，或者已到下一次刷新时间，就等待刷新
      * Ensure our metadata is fresh (if an update is expected, this will block
      * until it has completed).
      */
@@ -494,6 +496,7 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     public void maybeTriggerWakeup() {
+        // 如果是wakeup状态，就抛出WakeupException
         if (!wakeupDisabled.get() && wakeup.get()) {
             log.debug("Raising WakeupException in response to user wakeup");
             wakeup.set(false);

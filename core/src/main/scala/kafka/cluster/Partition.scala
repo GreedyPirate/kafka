@@ -703,7 +703,7 @@ class Partition(val topic: String,
     * @param requiredAcks
     * @return
     */
-  def appendRecordsToLeader(records: MemoryRecords, isFromClient: Boolean, requiredAcks: Int = 0): LogAppendInfo = {
+  def   appendRecordsToLeader(records: MemoryRecords, isFromClient: Boolean, requiredAcks: Int = 0): LogAppendInfo = {
     // inReadLock是一个柯里化函数，第二个参数是一个函数，返回值是LogAppendInfo和HW是否增加的bool值
     // 相当于给方法加了读锁
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {

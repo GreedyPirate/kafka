@@ -31,6 +31,7 @@ public class Topic {
     private static final Set<String> INTERNAL_TOPICS = Collections.unmodifiableSet(
             Utils.mkSet(GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME));
 
+    // 最大长度249
     private static final int MAX_NAME_LENGTH = 249;
 
     public static void validate(String topic) {

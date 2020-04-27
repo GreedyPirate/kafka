@@ -503,6 +503,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
 
         try {
             while (recordsRemaining > 0) {
+
+                // 拉取的消息保存到了nextInLineRecords，可能有很多方法要用，所以搞成了全局变量
                 if (nextInLineRecords == null || nextInLineRecords.isFetched) {
                     CompletedFetch completedFetch = completedFetches.peek();
                     if (completedFetch == null) break;
@@ -957,7 +959,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                 // current consumed position
                 // 获取上一次拉取的位移
                 Long position = subscriptions.position(tp);
-                // 要拉取的位移和上一次消费国的位移不一致
+                // 要拉取的位移和上一次消费过的位移不一致
                 if (position == null || position != fetchOffset) {
                     log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
                             "the expected offset {}", tp, fetchOffset, position);
@@ -966,6 +968,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
 
                 log.trace("Preparing to read {} bytes of data for partition {} with offset {}",
                         partition.records.sizeInBytes(), tp, position);
+                // 也就这两行是关键代码
                 Iterator<? extends RecordBatch> batches = partition.records.batches().iterator();
                 partitionRecords = new PartitionRecords(tp, completedFetch, batches);
 
@@ -987,6 +990,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                     }
                 }
 
+                // 更新缓存数据
                 if (partition.highWatermark >= 0) {
                     log.trace("Updating high watermark for partition {} to {}", tp, partition.highWatermark);
                     subscriptions.updateHighWatermark(tp, partition.highWatermark);

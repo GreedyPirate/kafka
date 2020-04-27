@@ -379,17 +379,19 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
       */
     def updateMetadataRequestPartitionInfo(partition: TopicPartition, beingDeleted: Boolean) {
       val leaderIsrAndControllerEpochOpt = controllerContext.partitionLeadershipInfo.get(partition)
+
       leaderIsrAndControllerEpochOpt match {
         case Some(l @ LeaderIsrAndControllerEpoch(leaderAndIsr, controllerEpoch)) =>
           val replicas = controllerContext.partitionReplicaAssignment(partition) // 分区所有的副本
           val offlineReplicas = replicas.filter(!controllerContext.isReplicaOnline(_, partition)) // 离线的副本
           val leaderIsrAndControllerEpoch = if (beingDeleted) {
-            val leaderDuringDelete = LeaderAndIsr.duringDelete(leaderAndIsr.isr) // 标记为正在删除的LeaderAndIsr对象
+            val leaderDuringDelete = LeaderAndIsr.duringDelete(leaderAndIsr.isr) // 标记为正在删除的LeaderAndIsr对象，leader为-2
             LeaderIsrAndControllerEpoch(leaderDuringDelete, controllerEpoch)
           } else {
             l
           }
 
+          // 同样也是PartitionState
           val partitionStateInfo = new UpdateMetadataRequest.PartitionState(leaderIsrAndControllerEpoch.controllerEpoch,
             leaderIsrAndControllerEpoch.leaderAndIsr.leader,
             leaderIsrAndControllerEpoch.leaderAndIsr.leaderEpoch,
@@ -468,6 +470,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
       }
 
       val partitionStates = Map.empty ++ updateMetadataRequestPartitionInfoMap
+      // 请求版本 4
       val updateMetadataRequestVersion: Short =
         if (controller.config.interBrokerProtocolVersion >= KAFKA_1_0_IV0) 4
         else if (controller.config.interBrokerProtocolVersion >= KAFKA_0_10_2_IV0) 3
@@ -476,7 +479,8 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
         else 0
 
       val updateMetadataRequest = {
-        val liveBrokers = if (updateMetadataRequestVersion == 0) {
+        // 获取所有存活的Broker
+        val liveBrokers = if (updateMetadataRequestVersion == 0) {  // 0.8版本的？ 先不看
           // Version 0 of UpdateMetadataRequest only supports PLAINTEXT.
           controllerContext.liveOrShuttingDownBrokers.map { broker =>
             val securityProtocol = SecurityProtocol.PLAINTEXT
@@ -497,7 +501,9 @@ class ControllerBrokerRequestBatch(controller: KafkaController, stateChangeLogge
           liveBrokers.asJava)
       }
 
+      // updateMetadataRequestBrokerSet是在addUpdateMetadataRequestForBrokers初始化的，就是请求的brokerId集合
       updateMetadataRequestBrokerSet.foreach { broker =>
+        // 对请求集合里的每一个broker都发送updateMetadata
         controller.sendRequest(broker, ApiKeys.UPDATE_METADATA, updateMetadataRequest, null)
       }
       updateMetadataRequestBrokerSet.clear()

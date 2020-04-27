@@ -460,12 +460,15 @@ class GroupMetadataManager(brokerId: Int,
             case None =>
               // Return offsets for all partitions owned by this consumer group. (this only applies to consumers
               // that commit offsets to Kafka.)
+              // 返回所有
               group.allOffsets.map { case (topicPartition, offsetAndMetadata) =>
                 topicPartition -> new OffsetFetchResponse.PartitionData(offsetAndMetadata.offset, offsetAndMetadata.metadata, Errors.NONE)
               }
 
             case Some(topicPartitions) =>
               topicPartitions.map { topicPartition =>
+                // 并不是一定去__consumer-offset里面取，group会缓存上一次提交的offset(第一次应该是初始化的时候加载的)
+                // TODO commit位移的时候要关注下offsets缓存
                 val partitionData = group.offset(topicPartition) match {
                   case None =>
                     new OffsetFetchResponse.PartitionData(OffsetFetchResponse.INVALID_OFFSET, "", Errors.NONE)
@@ -527,7 +530,9 @@ class GroupMetadataManager(brokerId: Int,
         val loadedGroups = mutable.Map[String, GroupMetadata]()
         val removedGroups = mutable.Set[String]()
 
+        // 从头到尾遍历
         while (currOffset < highWaterMark && !shuttingDown.get()) {
+          // loadBufferSize = 5*1024*1024
           val fetchDataInfo = log.read(currOffset, config.loadBufferSize, maxOffset = None,
             minOneMessage = true, isolationLevel = IsolationLevel.READ_UNCOMMITTED)
           val memRecords = fetchDataInfo.records match {
@@ -542,18 +547,20 @@ class GroupMetadataManager(brokerId: Int,
                   warn(s"Loaded offsets and group metadata from $topicPartition with buffer larger ($bytesNeeded bytes) than " +
                     s"configured offsets.load.buffer.size (${config.loadBufferSize} bytes)")
 
+                // 这个时候才分配
                 buffer = ByteBuffer.allocate(bytesNeeded)
               } else {
                 buffer.clear()
               }
 
               fileRecords.readInto(buffer, 0)
+              // 包装成了MemoryRecords
               MemoryRecords.readableRecords(buffer)
           }
 
           memRecords.batches.asScala.foreach { batch =>
             val isTxnOffsetCommit = batch.isTransactional
-            if (batch.isControlBatch) {
+            if (batch.isControlBatch) { //
               val recordIterator = batch.iterator
               if (recordIterator.hasNext) {
                 val record = recordIterator.next()

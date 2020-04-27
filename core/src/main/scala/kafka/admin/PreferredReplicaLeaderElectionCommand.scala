@@ -100,6 +100,7 @@ object PreferredReplicaLeaderElectionCommand extends Logging {
   def writePreferredReplicaElectionData(zkClient: KafkaZkClient,
                                         partitionsUndergoingPreferredReplicaElection: Set[TopicPartition]) {
     try {
+      // 创建相应的/admin/preferred_replica_election
       zkClient.createPreferredReplicaElection(partitionsUndergoingPreferredReplicaElection.toSet)
       println("Created preferred replica election path with %s".format(partitionsUndergoingPreferredReplicaElection.mkString(",")))
     } catch {
@@ -119,6 +120,7 @@ class PreferredReplicaLeaderElectionCommand(zkClient: KafkaZkClient, partitionsF
         partitions.map(new TopicPartition(topic, _))
       }.toSet
 
+      // 排除zk里没有的分区
       val (validPartitions, invalidPartitions) = partitionsFromUser.partition(partitionsFromZk.contains)
       PreferredReplicaLeaderElectionCommand.writePreferredReplicaElectionData(zkClient, validPartitions)
 

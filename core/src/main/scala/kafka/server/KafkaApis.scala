@@ -253,6 +253,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (authorize(request.session, ClusterAction, Resource.ClusterResource)) {
       val deletedPartitions = replicaManager.maybeUpdateMetadataCache(correlationId, updateMetadataRequest)
       if (deletedPartitions.nonEmpty)
+        // 组协调器处理删除的分区
         groupCoordinator.handleDeletedPartitions(deletedPartitions)
 
       if (adminManager.hasDelayedTopicOperations) {
@@ -1080,6 +1081,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   private def getOrCreateInternalTopic(topic: String, listenerName: ListenerName): MetadataResponse.TopicMetadata = {
     val topicMetadata = metadataCache.getTopicMetadata(Set(topic), listenerName)
+    // 取集合第一个，因为getTopicMetadata是批量的，Set(topic)
     topicMetadata.headOption.getOrElse(createInternalTopic(topic))
   }
 
@@ -1236,7 +1238,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             new OffsetFetchResponse(requestThrottleMs, Errors.NONE, (authorizedPartitionData ++ unauthorizedPartitionData).asJava)
           } else {
             // versions 1 and above read offsets from Kafka
-            if (offsetFetchRequest.isAllPartitions) {
+            if (offsetFetchRequest.isAllPartitions) { // null默认表示所有分区
               val (error, allPartitionData) = groupCoordinator.handleFetchOffsets(offsetFetchRequest.groupId)
               if (error != Errors.NONE)
                 offsetFetchRequest.getErrorResponse(requestThrottleMs, error)
@@ -1248,6 +1250,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             } else {
               val (authorizedPartitions, unauthorizedPartitions) = offsetFetchRequest.partitions.asScala
                 .partition(authorizeTopicDescribe)
+
+              // 主要的核心逻辑
               val (error, authorizedPartitionData) = groupCoordinator.handleFetchOffsets(offsetFetchRequest.groupId,
                 Some(authorizedPartitions))
               if (error != Errors.NONE)
@@ -1280,12 +1284,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       // get metadata (and create the topic if necessary)
       val (partition, topicMetadata) = findCoordinatorRequest.coordinatorType match {
         case FindCoordinatorRequest.CoordinatorType.GROUP =>
+          // 计算分区
           val partition = groupCoordinator.partitionFor(findCoordinatorRequest.coordinatorKey)
+          // TopicMetadata
           val metadata = getOrCreateInternalTopic(GROUP_METADATA_TOPIC_NAME, request.context.listenerName)
           (partition, metadata)
 
         case FindCoordinatorRequest.CoordinatorType.TRANSACTION =>
           val partition = txnCoordinator.partitionFor(findCoordinatorRequest.coordinatorKey)
+          // 这里拿到的是topic所有分区的元数据
           val metadata = getOrCreateInternalTopic(TRANSACTION_STATE_TOPIC_NAME, request.context.listenerName)
           (partition, metadata)
 
@@ -1297,11 +1304,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         val responseBody = if (topicMetadata.error != Errors.NONE) {
           new FindCoordinatorResponse(requestThrottleMs, Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)
         } else {
+          // 获取消费者坐在分区的leader所在的node
           val coordinatorEndpoint = topicMetadata.partitionMetadata.asScala
             .find(_.partition == partition)
             .map(_.leader)
             .flatMap(p => Option(p))
 
+          // 有则返回，没有报错
           coordinatorEndpoint match {
             case Some(endpoint) if !endpoint.isEmpty =>
               new FindCoordinatorResponse(requestThrottleMs, Errors.NONE, endpoint)
@@ -1389,7 +1398,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         request.session.clientAddress.toString,
         joinGroupRequest.rebalanceTimeout,
         joinGroupRequest.sessionTimeout,
-        joinGroupRequest.protocolType,
+        joinGroupRequest.protocolType, // consumer
         protocols,
         sendResponseCallback)
     }

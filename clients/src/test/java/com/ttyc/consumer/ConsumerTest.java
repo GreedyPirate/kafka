@@ -18,8 +18,10 @@ public class ConsumerTest {
         props.put("max.poll.interval.ms", "5000");
         props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
         props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
-        consumer.subscribe(Arrays.asList("test-1","test-3"));
+
+        consumer.subscribe(Arrays.asList("test-1"));
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(5L));
             if(records.count() > 0) {

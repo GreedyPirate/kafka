@@ -39,9 +39,14 @@ import java.util.regex.Pattern;
  * is "assigned" either directly with {@link #assignFromUser(Set)} (manual assignment)
  * or with {@link #assignFromSubscribed(Collection)} (automatic assignment from subscription).
  *
+ * 分配之后，并不是说可以立即拉取，而是有了初始化位移，我认为是要先知道从哪里拉
+ * 1. 新消费者组第一次拉取
+ * 2. 消费者组位移元信息过期
+ * 这2种情况首次拉取的位移是未知的，要根据auto.offset.reset来决定，正常的消费者组重启从上一次拉取的位置开始
  * Once assigned, the partition is not considered "fetchable" until its initial position has
- * been set with {@link #seek(TopicPartition, long)}. Fetchable partitions track a fetch
- * position which is used to set the offset of the next fetch, and a consumed position
+ * been set with {@link #seek(TopicPartition, long)}.
+ * 记录下一次fetch的开始位置
+ * Fetchable partitions track a fetch position which is used to set the offset of the next fetch, and a consumed position
  * which is the last offset that has been returned to the user. You can suspend fetching
  * from a partition through {@link #pause(TopicPartition)} without affecting the fetched/consumed
  * offsets. The partition will remain unfetchable until the {@link #resume(TopicPartition)} is
@@ -54,6 +59,12 @@ public class SubscriptionState {
     private static final String SUBSCRIPTION_EXCEPTION_MESSAGE =
             "Subscription to topics, partitions and pattern are mutually exclusive";
 
+    /**
+     * 分区订阅的3种类型
+     * AUTO_TOPICS：自动分配
+     * AUTO_PATTERN：正则匹配
+     * USER_ASSIGNED：用户用assign方法指定
+     */
     private enum SubscriptionType {
         NONE, AUTO_TOPICS, AUTO_PATTERN, USER_ASSIGNED
     }
@@ -70,9 +81,11 @@ public class SubscriptionState {
     /* the list of topics the group has subscribed to (set only for the leader on join group completion) */
     private final Set<String> groupSubscription;
 
+    // PartitionStates在副本同步也用于保存PartitionFetchState
     /* the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details) */
     private final PartitionStates<TopicPartitionState> assignment;
 
+    // 枚举 LATEST, EARLIEST
     /* Default offset reset strategy */
     private final OffsetResetStrategy defaultResetStrategy;
 
@@ -108,11 +121,12 @@ public class SubscriptionState {
         if (listener == null)
             throw new IllegalArgumentException("RebalanceListener cannot be null");
 
-        // 定TP的类型，是说consumer消费的TP是自动分配的，对用的有assign手动指定
+        // 定TP的类型，是说consumer消费的TP是自动分配的，对应的有assign手动指定
         setSubscriptionType(SubscriptionType.AUTO_TOPICS);
 
         this.rebalanceListener = listener;
 
+        // 初始化
         changeSubscription(topics);
     }
 
@@ -124,6 +138,7 @@ public class SubscriptionState {
         changeSubscription(topics);
     }
 
+    // 正则匹配时topic有变化的动作
     private void changeSubscription(Set<String> topicsToSubscribe) {
         if (!this.subscription.equals(topicsToSubscribe)) {
             this.subscription = topicsToSubscribe;
@@ -179,7 +194,9 @@ public class SubscriptionState {
         if (!this.partitionsAutoAssigned())
             throw new IllegalArgumentException("Attempt to dynamically assign partitions while manual assignment in use");
 
+        // 初始化分区的消费状态(真的用状态来描述是最准确的)
         Map<TopicPartition, TopicPartitionState> assignedPartitionStates = partitionToStateMap(assignments);
+        // 主要是Fetcher的metrics
         fireOnAssignment(assignedPartitionStates.keySet());
 
         if (this.subscribedPattern != null) {
@@ -505,7 +522,7 @@ public class SubscriptionState {
         }
 
         private boolean isMissingPosition() {
-            // 好绕... position==null && == resetStrategy
+            // 好绕... position==null && resetStrategy == null
             return !hasValidPosition() && !awaitingReset();
         }
 
@@ -535,6 +552,9 @@ public class SubscriptionState {
 
     }
 
+    /**
+     * 分区分配的hook，Fetcher实现了这个接口
+     */
     public interface Listener {
         /**
          * Fired after a new assignment is received (after a group rebalance or when the user manually changes the

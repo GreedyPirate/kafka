@@ -126,6 +126,7 @@ class ReplicaFetcherThread(name: String,
 
     maybeWarnIfOversizedRecords(records, topicPartition)
 
+    // 说明fetchOffset就是当前的LEO
     if (fetchOffset != replica.logEndOffset.messageOffset)
       throw new IllegalStateException("Offset mismatch for partition %s: fetched offset = %d, log end offset = %d.".format(
         topicPartition, fetchOffset, replica.logEndOffset.messageOffset))
@@ -135,17 +136,21 @@ class ReplicaFetcherThread(name: String,
         .format(replica.logEndOffset.messageOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
     // Append the leader's messages to the log
+    // 就是Log append
     partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false)
 
     if (isTraceEnabled)
       trace("Follower has replica log end offset %d after appending %d bytes of messages for partition %s"
         .format(replica.logEndOffset.messageOffset, records.sizeInBytes, topicPartition))
+    // 取LEO和leader HW的较小值
     val followerHighWatermark = replica.logEndOffset.messageOffset.min(partitionData.highWatermark)
-    val leaderLogStartOffset = partitionData.logStartOffset
+    // 更新follower自己的HW
+    replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
+
     // for the follower replica, we do not need to keep
     // its segment base offset the physical position,
     // these values will be computed upon making the leader
-    replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
+    val leaderLogStartOffset = partitionData.logStartOffset
     replica.maybeIncrementLogStartOffset(leaderLogStartOffset)
     if (isTraceEnabled)
       trace(s"Follower set replica high watermark for partition $topicPartition to $followerHighWatermark")
@@ -159,6 +164,7 @@ class ReplicaFetcherThread(name: String,
 
   def maybeWarnIfOversizedRecords(records: MemoryRecords, topicPartition: TopicPartition): Unit = {
     // oversized messages don't cause replication to fail from fetch request version 3 (KIP-74)
+    // 之前没有第一条消息大于replica.fetch.max.bytes时，至少取一条的处理
     if (fetchRequestVersion <= 2 && records.sizeInBytes > 0 && records.validBytes <= 0)
       error(s"Replication is failing due to a message that is greater than replica.fetch.max.bytes for partition $topicPartition. " +
         "This generally occurs when the max.message.bytes has been overridden to exceed this value and a suitably large " +
@@ -281,6 +287,7 @@ class ReplicaFetcherThread(name: String,
         try {
           val logStartOffset = replicaMgr.getReplicaOrException(topicPartition).logStartOffset
           builder.add(topicPartition, new JFetchRequest.PartitionData(
+            // fetchSize: replicaFetchMaxBytes
             partitionFetchState.fetchOffset, logStartOffset, fetchSize))
         } catch {
           case _: KafkaStorageException =>
@@ -293,6 +300,7 @@ class ReplicaFetcherThread(name: String,
 
     val fetchData = builder.build()
     val requestBuilder = JFetchRequest.Builder.
+      // replicaId就是brokerId
       forReplica(fetchRequestVersion, replicaId, maxWait, minBytes, fetchData.toSend())
         .setMaxBytes(maxBytes)
         .toForget(fetchData.toForget)
@@ -319,10 +327,13 @@ class ReplicaFetcherThread(name: String,
           info(s"Retrying leaderEpoch request for partition ${replica.topicPartition} as the leader reported an error: ${leaderEpochOffset.error}")
           partitionsWithError += tp
         } else {
+          // 正常逻辑
           val offsetTruncationState = getOffsetTruncationState(tp, leaderEpochOffset, replica)
+          // LEO < HW ?
           if (offsetTruncationState.offset < replica.highWatermark.messageOffset)
             warn(s"Truncating $tp to offset ${offsetTruncationState.offset} below high watermark ${replica.highWatermark.messageOffset}")
 
+          // 暂停日志的清理，对Checkpoint,index,log的截断，log依赖于FileChannel的truncate方法
           partition.truncateTo(offsetTruncationState.offset, isFuture = false)
           // mark the future replica for truncation only when we do last truncation
           if (offsetTruncationState.truncationCompleted)
@@ -340,6 +351,7 @@ class ReplicaFetcherThread(name: String,
   }
 
   override def buildLeaderEpochRequest(allPartitions: Seq[(TopicPartition, PartitionFetchState)]): ResultWithPartitions[Map[TopicPartition, Int]] = {
+    // TopicPartition->LeaderEpochFileCache
     val partitionEpochOpts = allPartitions
       .filter { case (_, state) => state.isTruncatingLog }
       .map { case (tp, _) => tp -> epochCacheOpt(tp) }.toMap
@@ -347,6 +359,8 @@ class ReplicaFetcherThread(name: String,
     val (partitionsWithEpoch, partitionsWithoutEpoch) = partitionEpochOpts.partition { case (_, epochCacheOpt) => epochCacheOpt.nonEmpty }
 
     debug(s"Build leaderEpoch request $partitionsWithEpoch")
+    // 获取最后一个,即当前的leader epoch
+    // Map[TopicPartition, leaderEpoch(int)]
     val result = partitionsWithEpoch.map { case (tp, epochCacheOpt) => tp -> epochCacheOpt.get.latestEpoch }
     ResultWithPartitions(result, partitionsWithoutEpoch.keys.toSet)
   }
@@ -354,10 +368,13 @@ class ReplicaFetcherThread(name: String,
   override def fetchEpochsFromLeader(partitions: Map[TopicPartition, Int]): Map[TopicPartition, EpochEndOffset] = {
     var result: Map[TopicPartition, EpochEndOffset] = null
     if (shouldSendLeaderEpochRequest) {
+      // 转成Java类型
       val partitionsAsJava = partitions.map { case (tp, epoch) => tp -> epoch.asInstanceOf[Integer] }.toMap.asJava
       val epochRequest = new OffsetsForLeaderEpochRequest.Builder(offsetForLeaderEpochRequestVersion, partitionsAsJava)
       try {
+        // 正常情况下返回的是leader副本的LEO
         val response = leaderEndpoint.sendRequest(epochRequest)
+        // Map[TopicPartition, EpochEndOffset] EpochEndOffset是leader epoch和
         result = response.responseBody.asInstanceOf[OffsetsForLeaderEpochResponse].responses.asScala
         debug(s"Receive leaderEpoch response $result")
       } catch {
@@ -370,6 +387,7 @@ class ReplicaFetcherThread(name: String,
           }
       }
     } else {
+      // 老版本
       // just generate a response with no error but UNDEFINED_OFFSET so that we can fall back to truncating using
       // high watermark in maybeTruncate()
       result = partitions.map { case (tp, _) =>
