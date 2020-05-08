@@ -763,7 +763,6 @@ class Log(@volatile var dir: File,
         * 每条消息的CRC校验
         */
       val appendInfo = analyzeAndValidateRecords(records, isFromClient = isFromClient)
-      info(s"analyze之后的 lastOffset : ${appendInfo.lastOffset}")
 
       // return if we have no valid messages or if this is a duplicate of the last appended entry
       if (appendInfo.shallowCount == 0)

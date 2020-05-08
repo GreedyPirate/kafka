@@ -387,6 +387,11 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
    *    partitions currently new or offline (rather than every partition this controller is aware of)
    * 2. Even if we do refresh the cache, there is no guarantee that by the time the leader and ISR request reaches
    *    every broker that it is still valid.  Brokers check the leader epoch to determine validity of the request.
+   * 1. 发送update metadata request，Controller把最新的broker列表同步给别的broker
+   * 2. 将新broker上的分区和副本都置为Online状态，并选举分区leader副本，注意这里面已经包含了LeaderAndIsr请求
+   * 3. 新broker上是否有重分配的副本，有就执行
+   * 4. 如果新broker上有需要删除的topic，开始删除
+   * 5. 注册了一个/broker/ids/0的数据变化的监听器，个人觉得broker元信息不会改变
    */
   private def onBrokerStartup(newBrokers: Seq[Int]) {
     info(s"New broker startup callback for ${newBrokers.mkString(",")}")
@@ -443,13 +448,17 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
    */
   private def onBrokerFailure(deadBrokers: Seq[Int]) {
     info(s"Broker failure callback for ${deadBrokers.mkString(",")}")
+    // 移除缓存中下线的broker上的分区
     deadBrokers.foreach(controllerContext.replicasOnOfflineDirs.remove)
     val deadBrokersThatWereShuttingDown =
       deadBrokers.filter(id => controllerContext.shuttingDownBrokerIds.remove(id))
     info(s"Removed $deadBrokersThatWereShuttingDown from list of shutting down brokers.")
+    // 下线broker上的副本
     val allReplicasOnDeadBrokers = controllerContext.replicasOnBrokers(deadBrokers.toSet)
+
     onReplicasBecomeOffline(allReplicasOnDeadBrokers)
 
+    // 移除BrokerModificationsHandler
     unregisterBrokerModificationsHandler(deadBrokers)
   }
 
@@ -468,22 +477,28 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     * Note that we don't need to refresh the leader/isr cache for all topic/partitions at this point. This is because
     * the partition state machine will refresh our cache for us when performing leader election for all new/offline
     * partitions coming online.
+    *
     */
   private def onReplicasBecomeOffline(newOfflineReplicas: Set[PartitionAndReplica]): Unit = {
     val (newOfflineReplicasForDeletion, newOfflineReplicasNotForDeletion) =
       newOfflineReplicas.partition(p => topicDeletionManager.isTopicQueuedUpForDeletion(p.topic))
 
+    // 将leader在dead broker上的分区找出来
     val partitionsWithoutLeader = controllerContext.partitionLeadershipInfo.filter(partitionAndLeader =>
       !controllerContext.isReplicaOnline(partitionAndLeader._2.leaderAndIsr.leader, partitionAndLeader._1) &&
         !topicDeletionManager.isTopicQueuedUpForDeletion(partitionAndLeader._1.topic)).keySet
 
     // trigger OfflinePartition state for all partitions whose current leader is one amongst the newOfflineReplicas
+    // 标记这些分区为OfflinePartition状态
     partitionStateMachine.handleStateChanges(partitionsWithoutLeader.toSeq, OfflinePartition)
+    // 用这些剩余分区剩余的副本选举leader
     // trigger OnlinePartition state changes for offline or new partitions
     partitionStateMachine.triggerOnlinePartitionStateChange()
     // trigger OfflineReplica state change for those newly offline replicas
+    // dead broker上的副本置为Offline
     replicaStateMachine.handleStateChanges(newOfflineReplicasNotForDeletion.toSeq, OfflineReplica)
 
+    // broker已下线，删除失败
     // fail deletion of topics that are affected by the offline replicas
     if (newOfflineReplicasForDeletion.nonEmpty) {
       // it is required to mark the respective replicas in TopicDeletionFailed state since the replica cannot be
@@ -494,6 +509,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
 
     // If replica failure did not require leader re-election, inform brokers of the offline replica
     // Note that during leader re-election, brokers update their metadata
+    // 如果dead broker上没有分区的leader副本，就发送UpdateMetadataRequest给活着的broker
     if (partitionsWithoutLeader.isEmpty) {
       sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
     }
@@ -557,7 +573,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
   private def onPartitionReassignment(topicPartition: TopicPartition, reassignedPartitionContext: ReassignedPartitionsContext) {
     val reassignedReplicas = reassignedPartitionContext.newReplicas
     // 是否所有要分配的副本都在isr中
-    if (!areReplicasInIsr(topicPartition, reassignedReplicas)) { // 说明不是所有的副本都在isr里，我可以理解为有新副本
+    if (!areReplicasInIsr(topicPartition, reassignedReplicas)) { // 说明不是所有的副本都在isr里，我可以理解为有新副本(reassign)
       info(s"New replicas ${reassignedReplicas.mkString(",")} for partition $topicPartition being reassigned not yet " +
         "caught up with the leader")
       // 获取本次重分配新增的副本 RAR -- OAR
@@ -1028,7 +1044,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
   /**
    * Send the leader information for selected partitions to selected brokers so that they can correctly respond to
    * metadata requests
-   *
+   * UpdateMetadataRequest主要是关于broker和分区的变化
    * @param brokers The brokers that the update metadata request should be sent to
    */
   private[controller] def sendUpdateMetadataRequest(brokers: Seq[Int], partitions: Set[TopicPartition] = Set.empty[TopicPartition]) {
@@ -1358,23 +1374,37 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
   case object BrokerChange extends ControllerEvent {
     override def state: ControllerState = ControllerState.BrokerChange
 
+    /**
+      * curBrokers表示zk中当前的broker列表信息，liveOrShuttingDownBrokerIds表示本地缓存的broker列表信息
+      * 只需要简单的对curBrokers和liveOrShuttingDownBrokerIds做差集运算，我们就知道上线和下线的broker集合分别是什么
+      */
     override def process(): Unit = {
       if (!isActive) return
+      // 获取zk中当前所有broker的信息
       val curBrokers = zkClient.getAllBrokersInCluster.toSet
       val curBrokerIds = curBrokers.map(_.id)
       val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
+      // 新增的broker
       val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
+      // 下线的broker
       val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
+
+      // 新broker的信息
       val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
+      // 更新本地缓存
       controllerContext.liveBrokers = curBrokers
+
       val newBrokerIdsSorted = newBrokerIds.toSeq.sorted
       val deadBrokerIdsSorted = deadBrokerIds.toSeq.sorted
       val liveBrokerIdsSorted = curBrokerIds.toSeq.sorted
       info(s"Newly added brokers: ${newBrokerIdsSorted.mkString(",")}, " +
         s"deleted brokers: ${deadBrokerIdsSorted.mkString(",")}, all live brokers: ${liveBrokerIdsSorted.mkString(",")}")
 
+      // 建立当前broker(controller)与新增broker之间的channel
       newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
+      // 关闭当前broker(controller)与dead broker直接的所有资源
       deadBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
+
       if (newBrokerIds.nonEmpty)
         onBrokerStartup(newBrokerIdsSorted)
       if (deadBrokerIds.nonEmpty)

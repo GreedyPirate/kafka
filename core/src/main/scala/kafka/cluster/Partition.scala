@@ -419,21 +419,28 @@ class Partition(val topic: String,
    * @return true if the leader's log start offset or high watermark have been updated
    */
   def updateReplicaLogReadResult(replica: Replica, logReadResult: LogReadResult): Boolean = {
+    // 此处的replica就是远程副本
     val replicaId = replica.brokerId
+
     // No need to calculate low watermark if there is no delayed DeleteRecordsRequest
+    // LW就是所有副本logStartOffset的最小值
     val oldLeaderLW = if (replicaManager.delayedDeleteRecordsPurgatory.delayed > 0) lowWatermarkIfLeader else -1L
+    // 更新同步信息
     replica.updateLogReadResult(logReadResult)
+    // 新的LW
     val newLeaderLW = if (replicaManager.delayedDeleteRecordsPurgatory.delayed > 0) lowWatermarkIfLeader else -1L
     // check if the LW of the partition has incremented
     // since the replica's logStartOffset may have incremented
     val leaderLWIncremented = newLeaderLW > oldLeaderLW
     // check if we need to expand ISR to include this replica
     // if it is not in the ISR yet
+    // 扩充ISR列表
     val leaderHWIncremented = maybeExpandIsr(replicaId, logReadResult)
 
     val result = leaderLWIncremented || leaderHWIncremented
     // some delayed operations may be unblocked after HW or LW changed
     if (result)
+      // 尝试完成一些延迟操作:produce,fetch,deleteRecords
       tryCompleteDelayedRequests()
 
     debug(s"Recorded replica $replicaId log end offset (LEO) position ${logReadResult.info.fetchOffsetMetadata.messageOffset}.")
@@ -464,17 +471,24 @@ class Partition(val topic: String,
           val replica = getReplica(replicaId).get
           val leaderHW = leaderReplica.highWatermark
           val fetchOffset = logReadResult.info.fetchOffsetMetadata.messageOffset
-          if (!inSyncReplicas.contains(replica) &&
-             assignedReplicas.map(_.brokerId).contains(replicaId) &&
-             replica.logEndOffset.offsetDiff(leaderHW) >= 0 &&
-             leaderEpochStartOffsetOpt.exists(fetchOffset >= _)) {
+
+          // 如果不在ISR列表中 && 是已分配的副本 && follower的LEO > Leader的HW && follower的fetchOffset至少比一个leader epoch的start offset大
+          if (!inSyncReplicas.contains(replica)
+            && assignedReplicas.map(_.brokerId).contains(replicaId)
+            && replica.logEndOffset.offsetDiff(leaderHW) >= 0
+            && leaderEpochStartOffsetOpt.exists(fetchOffset >= _)) {
+
+            // 添加到集合
             val newInSyncReplicas = inSyncReplicas + replica
             info(s"Expanding ISR from ${inSyncReplicas.map(_.brokerId).mkString(",")} " +
               s"to ${newInSyncReplicas.map(_.brokerId).mkString(",")}")
             // update ISR in ZK and cache
+            // 新的Isr更新到zk的state节点，并更新到本地缓存isrChangeSet中
             updateIsr(newInSyncReplicas)
+            // metrics
             replicaManager.isrExpandRate.mark()
           }
+          // 尝试增加leader的HW，因为有follower进入到ISR了
           // check if the HW of the partition can now be incremented
           // since the replica may already be in the ISR and its LEO has just incremented
           maybeIncrementLeaderHW(leaderReplica, logReadResult.fetchTimeMs)
@@ -581,6 +595,7 @@ class Partition(val topic: String,
    * The low watermark offset value, calculated only if the local replica is the partition leader
    * It is only used by leader broker to decide when DeleteRecordsRequest is satisfied. Its value is minimum logStartOffset of all live replicas
    * Low watermark will increase when the leader broker receives either FetchRequest or DeleteRecordsRequest.
+   * low watermark就是所有副本startOffset的最小值
    */
   def lowWatermarkIfLeader: Long = {
     if (!isLeaderReplicaLocal)
@@ -824,15 +839,18 @@ class Partition(val topic: String,
 
   private def updateIsr(newIsr: Set[Replica]) {
     val newLeaderAndIsr = new LeaderAndIsr(localBrokerId, leaderEpoch, newIsr.map(_.brokerId).toList, zkVersion)
+    // 将isr更新到state节点
     val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkClient, topicPartition, newLeaderAndIsr,
       controllerEpoch)
 
     if (updateSucceeded) {
+      // 记录到isrChangeSet变量中
       replicaManager.recordIsrChange(topicPartition)
       inSyncReplicas = newIsr
       zkVersion = newVersion
       trace("ISR updated to [%s] and zkVersion updated to [%d]".format(newIsr.mkString(","), zkVersion))
     } else {
+      // metrics
       replicaManager.failedIsrUpdatesRate.mark()
       info("Cached zkVersion [%d] not equal to that in zookeeper, skip updating ISR".format(zkVersion))
     }

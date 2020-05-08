@@ -912,12 +912,13 @@ class KafkaApis(val requestChannel: RequestChannel,
           val found = if (fromConsumer) {
             // 根据事务隔离级别，获取可拉取的位移
             val lastFetchableOffset = offsetRequest.isolationLevel match {
+                // lastStableOffset, 应该可以对应到TopicPartitionState
               case IsolationLevel.READ_COMMITTED => localReplica.lastStableOffset.messageOffset
                 // 默认没使用事务，用的是highWatermark
               case IsolationLevel.READ_UNCOMMITTED => localReplica.highWatermark.messageOffset
             }
 
-            // 这里的if...else...就是if (fromConsumer)的返回值
+            // 这里的if...else...就是if (fromConsumer)的返回值 = found
             // reset到最新的
             if (timestamp == ListOffsetRequest.LATEST_TIMESTAMP)
               // case class -1 和 highWatermark
@@ -930,7 +931,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 .filter(allowed).getOrElse(TimestampOffset.Unknown)
             }
           } else {
-            // 不是consumer的先不看
+            // 不是consumer的先不看(follower)
             fetchOffsetForTimestamp(topicPartition, timestamp)
               .getOrElse(TimestampOffset.Unknown)
           }

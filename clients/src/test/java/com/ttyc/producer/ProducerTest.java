@@ -8,8 +8,9 @@ import java.util.List;
 import java.util.Properties;
 
 public class ProducerTest {
+
     public static void main(String[] args) throws InterruptedException {
-        send("test-1");
+        sendNoStop("foo");
     }
 
     public static void send (String topic) {
@@ -28,8 +29,8 @@ public class ProducerTest {
         partitionInfos.forEach(t->{
             System.out.println(t);
         });
-        for (int i = 0; i < 1000; i++) {
-            ProducerRecord<String, String> record = new ProducerRecord<>(topic, "key" + i,  "local test -------- " + i);
+        for (int i = 0; i < 10000; i++) {
+            ProducerRecord<String, String> record = new ProducerRecord<>(topic, 1, "key" + i,  "local test -------- " + i);
             producer.send(record, (data, ex) -> {
                 long offset = data.offset();
                 int partition = data.partition();
@@ -39,6 +40,32 @@ public class ProducerTest {
         try {
             Thread.sleep(2000);
         } catch (InterruptedException e) {
+        }
+    }
+
+    public static void sendNoStop(String topic) throws InterruptedException {
+        Properties props = new Properties();
+        props.put("bootstrap.servers", "localhost:9092");
+        props.put("key.serializer",
+                "org.apache.kafka.common.serialization.StringSerializer");
+        props.put("value.serializer",
+                "org.apache.kafka.common.serialization.StringSerializer");
+        props.put("linger.ms", 100);
+        props.put("acks", "all");
+
+
+        KafkaProducer<String, String> producer = new KafkaProducer<String, String>(props);
+        List<PartitionInfo> partitionInfos = producer.partitionsFor(topic);
+        partitionInfos.forEach(t->{
+            System.out.println(t);
+        });
+        for (;;) {
+            ProducerRecord<String, String> record = new ProducerRecord<>(topic, 1, "key",  "local test -------- ");
+            producer.send(record, (data, ex) -> {
+                long offset = data.offset();
+                int partition = data.partition();
+                System.out.println("send to partition " + partition);
+            });
         }
     }
 }

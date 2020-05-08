@@ -4,6 +4,7 @@ import java.util.Properties
 
 import kafka.cluster.BrokerEndPoint
 import kafka.server.BrokerIdAndFetcherId
+import kafka.utils.ToolsUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
 import org.junit.Test
@@ -142,6 +143,12 @@ class ScalaTest {
     val (subsequent, previous) = leadersEpoch.partition(e => e > followerEpoch)
     println(s"subsequent is empty? ${subsequent.isEmpty}, subsequent is $subsequent, previous is empty ${previous.isEmpty}, previous is $previous")
 
+  }
+
+  @Test
+  def testDate: Unit={
+    var date = ToolsUtils.formateDate(System.currentTimeMillis())
+    printf(s"date = $date")
   }
 }
 

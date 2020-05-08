@@ -1415,7 +1415,7 @@ class ReplicaManager(val config: KafkaConfig,
         // 正常处理
         // we do not need to check if the leader exists again since this has been done at the beginning of this process
         val partitionsToMakeFollowerWithLeaderAndOffset = partitionsToMakeFollower.map(partition =>
-          // leader所在的broker和当前broker副本的HW作为初始同步位移
+          // 向leader所在的broker同步，以当前broker副本的HW作为初始同步位移
           partition.topicPartition -> BrokerAndInitialOffset(
             metadataCache.getAliveBrokers.find(_.id == partition.leaderReplicaIdOpt.get).get.brokerEndPoint(config.interBrokerListenerName),
             partition.getReplica().get.highWatermark.messageOffset)).toMap
@@ -1451,7 +1451,6 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   *  leader也会保存follower的fetch state？
    * Update the follower's fetch state in the leader based on the last fetch request and update `readResult`,
    * if the follower replica is not recognized to be one of the assigned replicas. Do not update
    * `readResult` otherwise, so that log start/end offset and high watermark is consistent with

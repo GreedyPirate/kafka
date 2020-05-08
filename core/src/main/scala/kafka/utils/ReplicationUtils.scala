@@ -27,6 +27,7 @@ object ReplicationUtils extends Logging {
   def updateLeaderAndIsr(zkClient: KafkaZkClient, partition: TopicPartition, newLeaderAndIsr: LeaderAndIsr,
                          controllerEpoch: Int): (Boolean, Int) = {
     debug(s"Updated ISR for $partition to ${newLeaderAndIsr.isr.mkString(",")}")
+    // state节点
     val path = TopicPartitionStateZNode.path(partition)
     val newLeaderData = TopicPartitionStateZNode.encode(LeaderIsrAndControllerEpoch(newLeaderAndIsr, controllerEpoch))
     // use the epoch of the controller that made the leadership decision, instead of the current controller epoch

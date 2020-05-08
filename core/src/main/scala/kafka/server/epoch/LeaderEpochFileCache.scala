@@ -185,11 +185,11 @@ class LeaderEpochFileCache(topicPartition: TopicPartition,
     inWriteLock(lock) {
       if (epochs.nonEmpty) {
         val (subsequentEntries, previousEntries) = epochs.partition(_.startOffset > startOffset)
-
+        // 大致意思：找到大于新的StartOffset的最后一个entry，即previousEntries的最后一个，然后用它的epoch和新的startOffset组成新的entry
         previousEntries.lastOption.foreach { firstBeforeStartOffset =>
           val updatedFirstEntry = EpochEntry(firstBeforeStartOffset.epoch, startOffset)
           epochs = updatedFirstEntry +: subsequentEntries
-
+          // mmap刷盘
           flush()
 
           debug(s"Cleared entries $previousEntries and rewrote first entry $updatedFirstEntry after " +

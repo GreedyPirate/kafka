@@ -20,7 +20,7 @@ package kafka.server
 import java.util.concurrent.locks.ReentrantLock
 
 import kafka.cluster.{BrokerEndPoint, Replica}
-import kafka.utils.{DelayedItem, Pool, ShutdownableThread}
+import kafka.utils.{CoreUtils, DelayedItem, Pool, ShutdownableThread}
 import org.apache.kafka.common.errors.{CorruptRecordException, KafkaStorageException}
 import org.apache.kafka.common.requests.EpochEndOffset._
 import kafka.common.ClientIdAndBroker
@@ -191,7 +191,7 @@ abstract class AbstractFetcherThread(name: String,
                     val newOffset = records.batches.asScala.lastOption.map(_.nextOffset).getOrElse(
                       currentPartitionFetchState.fetchOffset)
 
-                    // 更新lag，如果lag<=0，说明是inSync的
+                    // 更新metric lag(FetcherLagStats)，如果lag<=0，说明是inSync的；   HW-lastOffset
                     fetcherLagStats.getAndMaybePut(topic, partitionId).lag = Math.max(0L, partitionData.highWatermark - newOffset)
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
                     // 分区，拉取时的fetchOffset，拉取的结果数据
@@ -200,7 +200,7 @@ abstract class AbstractFetcherThread(name: String,
                     val validBytes = records.validBytes
                     // ReplicaDirAlterThread may have removed topicPartition from the partitionStates after processing the partition data
                     if (validBytes > 0 && partitionStates.contains(topicPartition)) {
-                      // 更新分区的PartitionState
+                      // 更新分区的PartitionState(newOffset, 0, false)
                       // Update partitionStates only if there is no exception during processPartitionData
                       partitionStates.updateAndMoveToEnd(topicPartition, new PartitionFetchState(newOffset))
                       // metrics ...
@@ -428,6 +428,7 @@ abstract class AbstractFetcherThread(name: String,
 
 object AbstractFetcherThread {
 
+  // 就是一个带有错误分区信息的结果类型
   case class ResultWithPartitions[R](result: R, partitionsWithError: Set[TopicPartition])
 
   trait FetchRequest {

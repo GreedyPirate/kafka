@@ -126,7 +126,7 @@ class ReplicaFetcherThread(name: String,
 
     maybeWarnIfOversizedRecords(records, topicPartition)
 
-    // 说明fetchOffset就是当前的LEO
+    // 说明请求的fetchOffset就是当前的LEO
     if (fetchOffset != replica.logEndOffset.messageOffset)
       throw new IllegalStateException("Offset mismatch for partition %s: fetched offset = %d, log end offset = %d.".format(
         topicPartition, fetchOffset, replica.logEndOffset.messageOffset))
@@ -136,15 +136,14 @@ class ReplicaFetcherThread(name: String,
         .format(replica.logEndOffset.messageOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
 
     // Append the leader's messages to the log
-    // 就是Log append
+    // 就是Log append 不过调用的是Log#appendAsFollower
     partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false)
 
     if (isTraceEnabled)
       trace("Follower has replica log end offset %d after appending %d bytes of messages for partition %s"
         .format(replica.logEndOffset.messageOffset, records.sizeInBytes, topicPartition))
-    // 取LEO和leader HW的较小值
+    // 取本地follower副本的LEO(append之后已更新) 和响应中leader HW的较小值(其实二者已相等)，作为follower的HW
     val followerHighWatermark = replica.logEndOffset.messageOffset.min(partitionData.highWatermark)
-    // 更新follower自己的HW
     replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
 
     // for the follower replica, we do not need to keep
@@ -164,7 +163,7 @@ class ReplicaFetcherThread(name: String,
 
   def maybeWarnIfOversizedRecords(records: MemoryRecords, topicPartition: TopicPartition): Unit = {
     // oversized messages don't cause replication to fail from fetch request version 3 (KIP-74)
-    // 之前没有第一条消息大于replica.fetch.max.bytes时，至少取一条的处理
+    // 之前没有第一条消息大于replica.fetch.max.bytes时，至少取一条的处理，目前fetchRequestVersion=8
     if (fetchRequestVersion <= 2 && records.sizeInBytes > 0 && records.validBytes <= 0)
       error(s"Replication is failing due to a message that is greater than replica.fetch.max.bytes for partition $topicPartition. " +
         "This generally occurs when the max.message.bytes has been overridden to exceed this value and a suitably large " +

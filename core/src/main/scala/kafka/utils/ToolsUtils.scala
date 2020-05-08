@@ -16,6 +16,9 @@
 */
 package kafka.utils
 
+import java.time.format.DateTimeFormatter
+import java.time.{Instant, LocalDateTime, ZoneId}
+
 import joptsimple.OptionParser
 import org.apache.kafka.common.{Metric, MetricName}
 
@@ -59,5 +62,9 @@ object ToolsUtils {
       case (metricName, value) =>
         println(s"%-${maxLengthOfDisplayName}s : %.3f".format(metricName, value))
     }
+  }
+
+  def formateDate(time: Long): String = {
+    LocalDateTime.ofInstant(Instant.ofEpochMilli(time), ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm:ss"))
   }
 }

@@ -94,7 +94,9 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
     // be careful here. Maybe the startup() API has already started the request send thread
     brokerLock synchronized {
       if (!brokerStateInfo.contains(broker.id)) {
+        // 建立当前broker与新broker的网络通道，初始化请求发送线程
         addNewBroker(broker)
+        // 启动请求发送线程
         startRequestSendThread(broker.id)
       }
     }

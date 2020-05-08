@@ -17,9 +17,12 @@
 
 package kafka.cluster
 
+import java.time.format.DateTimeFormatter
+import java.time.{Instant, LocalDateTime, ZoneId}
+
 import kafka.log.Log
 import kafka.server.epoch.LeaderEpochFileCache
-import kafka.utils.Logging
+import kafka.utils.{Logging, ToolsUtils}
 import kafka.server.{LogOffsetMetadata, LogReadResult}
 import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.common.errors.OffsetOutOfRangeException
@@ -73,14 +76,24 @@ class Replica(val brokerId: Int,
    * high frequency.
    */
   def updateLogReadResult(logReadResult: LogReadResult) {
+    // fetchOffsetMetadata就是fetch请求中的fetchOffset，表示从哪里开始拉取，leaderLogEndOffset就是LEO
+    // 通过debug，大部分情况是走第一个if，二者是相等的，表示生产消息和follower同步消息的速率在一个水平线上
     if (logReadResult.info.fetchOffsetMetadata.messageOffset >= logReadResult.leaderLogEndOffset)
+      // _lastCaughtUpTimeMs更新为fetchTimeMs，表示拉取时的当前时间
       _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, logReadResult.fetchTimeMs)
     else if (logReadResult.info.fetchOffsetMetadata.messageOffset >= lastFetchLeaderLogEndOffset)
+      info("hit by < LEO")
       _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
 
+    // followerLogStartOffset是fetch请求中的，表示的是follower副本的LogStartOffset
+    // 注意里面有if local的判断，这里其实更新的是follower副本的LogStartOffset
+    // _logStartOffset = followerLogStartOffset
     logStartOffset = logReadResult.followerLogStartOffset
+    // 和上面一样，这个LEO表示的是follower副本的LEO
     logEndOffset = logReadResult.info.fetchOffsetMetadata
+    // 记录fetch时， leader的LEO
     lastFetchLeaderLogEndOffset = logReadResult.leaderLogEndOffset
+    // 记录fetch的时间
     lastFetchTimeMs = logReadResult.fetchTimeMs
   }
 
