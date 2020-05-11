@@ -84,9 +84,6 @@ public class MemoryRecordsBuilder {
     private MemoryRecords builtRecords;
     private boolean aborted = false;
 
-    // FIXME 自用
-    private final Logger logger = new LogContext("self debug ").logger(MemoryRecordsBuilder.class);
-
     public MemoryRecordsBuilder(ByteBufferOutputStream bufferStream,
                                 byte magic,
                                 CompressionType compressionType,

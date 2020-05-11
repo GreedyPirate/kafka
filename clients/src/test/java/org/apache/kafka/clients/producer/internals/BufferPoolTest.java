@@ -28,9 +28,9 @@ import org.junit.After;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,7 +54,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 
-@RunWith(PowerMockRunner.class)
+//@RunWith(PowerMockRunner.class)
 public class BufferPoolTest {
     private final MockTime time = new MockTime();
     private final Metrics metrics = new Metrics(time);
@@ -93,6 +93,38 @@ public class BufferPoolTest {
         pool.deallocate(buffer);
         assertEquals("All memory should be available", totalMemory, pool.availableMemory());
         assertEquals("Non-standard size didn't go to the free list.", totalMemory - size, pool.unallocatedMemory());
+    }
+
+    @Test
+    public void testWatchVarWhenAllocate() throws Exception {
+        long totalMemory = 1000;
+        int size = 100;
+        BufferPool pool = new BufferPool(totalMemory, size, metrics, time, metricGroup);
+        ByteBuffer buffer = pool.allocate(size, maxBlockTimeMs);
+        printInternalPool(pool);
+
+        pool.deallocate(buffer);
+
+        ByteBuffer buffer0 = pool.allocate(size, maxBlockTimeMs);
+        ByteBuffer buffer1 = pool.allocate(size, maxBlockTimeMs);
+        ByteBuffer buffer2 = pool.allocate(size, maxBlockTimeMs);
+        pool.deallocate(buffer0);
+        pool.deallocate(buffer1);
+
+
+        printInternalPool(pool);
+        pool.deallocate(buffer2);
+
+        printInternalPool(pool);
+
+    }
+
+    private void printInternalPool(BufferPool pool) {
+        long available = pool.availableMemory();
+        long unallocated = pool.unallocatedMemory();
+        int freeSize = pool.freeSize();
+
+        System.out.println("available = " + available + ", unallocated = " + unallocated + ", freeSize = " + freeSize);
     }
 
     /**
