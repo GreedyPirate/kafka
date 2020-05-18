@@ -1627,7 +1627,10 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     override def state: ControllerState = ControllerState.IsrChange
 
     override def process(): Unit = {
+      // 只能是Controller处理
       if (!isActive) return
+      // 获取/isr_change_notification节点下所有的change事件序列号
+      // /isr_change_notification/isr_change_0000000001返回0000000001
       val sequenceNumbers = zkClient.getAllIsrChangeNotifications
       try {
         val partitions = zkClient.getPartitionsFromIsrChangeNotifications(sequenceNumbers)

@@ -111,7 +111,6 @@ public class BufferPoolTest {
         pool.deallocate(buffer0);
         pool.deallocate(buffer1);
 
-
         printInternalPool(pool);
         pool.deallocate(buffer2);
 
@@ -238,6 +237,7 @@ public class BufferPoolTest {
             fail("The buffer allocated more memory than its maximum value 2");
         } catch (TimeoutException e) {
             // this is good
+
         }
         assertEquals(0, pool.queued());
         assertEquals(1, pool.availableMemory());

@@ -5,6 +5,7 @@ import java.util.Properties
 import kafka.cluster.BrokerEndPoint
 import kafka.server.BrokerIdAndFetcherId
 import kafka.utils.ToolsUtils
+import kafka.zk.IsrChangeNotificationSequenceZNode.SequenceNumberPrefix
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
 import org.junit.Test
@@ -150,6 +151,13 @@ class ScalaTest {
     var date = ToolsUtils.formateDate(System.currentTimeMillis())
     printf(s"date = $date")
   }
+
+  @Test
+  def testIsrSeq: Unit = {
+    val number = sequenceNumber("/isr_change_notification/isr_change_0000000001")
+    println(s"num is : $number")
+  }
+  def sequenceNumber(path: String) = path.substring(path.lastIndexOf(SequenceNumberPrefix) + SequenceNumberPrefix.length)
 }
 
 case class BrokerIdAndInitialOffset(brokerId: Int, initOffset: Long)

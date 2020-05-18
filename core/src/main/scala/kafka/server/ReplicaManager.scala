@@ -258,8 +258,12 @@ class ReplicaManager(val config: KafkaConfig,
     val now = System.currentTimeMillis()
     isrChangeSet synchronized {
       if (isrChangeSet.nonEmpty &&
+        // recordIsrChange里记录了lastIsrChangeMs
+        // 也就是说距离上次isrChangeSet变化过了5s 或者距离上次广播ISR change事件过了60s，这里才会进行新一次的广播ISR change
         (lastIsrChangeMs.get() + ReplicaManager.IsrChangePropagationBlackOut < now ||
           lastIsrPropagationMs.get() + ReplicaManager.IsrChangePropagationInterval < now)) {
+        // 写入的是一个顺序节点 /isr_change_notification/isr_change_0000000001
+        // 相应的处理器是IsrChangeNotificationHandler的children事件 ———— IsrChangeNotification
         zkClient.propagateIsrChanges(isrChangeSet)
         isrChangeSet.clear()
         lastIsrPropagationMs.set(now)

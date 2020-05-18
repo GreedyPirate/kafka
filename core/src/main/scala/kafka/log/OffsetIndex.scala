@@ -144,7 +144,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
         val reOffset = relativeOffset(offset)
         mmap.putInt(reOffset) // lastOffset - baseOffset
         mmap.putInt(position) // log.sizeInBytes()
-        info(s"offsetIndex relativeOffset is ${reOffset}, position is ${position}")
+//        info(s"offsetIndex relativeOffset is ${reOffset}, position is ${position}")
         _entries += 1
         _lastOffset = offset
         require(_entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
