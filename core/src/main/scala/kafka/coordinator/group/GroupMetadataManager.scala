@@ -460,7 +460,7 @@ class GroupMetadataManager(brokerId: Int,
             case None =>
               // Return offsets for all partitions owned by this consumer group. (this only applies to consumers
               // that commit offsets to Kafka.)
-              // 返回所有
+              // 返回所有分区的提交记录
               group.allOffsets.map { case (topicPartition, offsetAndMetadata) =>
                 topicPartition -> new OffsetFetchResponse.PartitionData(offsetAndMetadata.offset, offsetAndMetadata.metadata, Errors.NONE)
               }

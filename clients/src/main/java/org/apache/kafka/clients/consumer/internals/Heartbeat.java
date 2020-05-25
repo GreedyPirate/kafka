@@ -21,6 +21,7 @@ package org.apache.kafka.clients.consumer.internals;
  * A helper class for managing the heartbeat to the coordinator
  */
 public final class Heartbeat {
+    // 参数
     private final int sessionTimeoutMs;
     private final int heartbeatIntervalMs;
     private final int maxPollIntervalMs;
@@ -30,7 +31,9 @@ public final class Heartbeat {
     private volatile long lastHeartbeatSend; // volatile since it is read by metrics
     // 上一次心跳响应接收时间
     private long lastHeartbeatReceive;
+    // session重置/初始化的实际
     private long lastSessionReset;
+    // consumer 上一次poll的实际
     private long lastPoll;
     private boolean heartbeatFailed;
 
@@ -82,11 +85,13 @@ public final class Heartbeat {
         // 计划下一次心跳的时间
         final long delayToNextHeartbeat;
         if (heartbeatFailed)
+            // 失败，就是重试间隔
             delayToNextHeartbeat = retryBackoffMs;
         else
+            // 正常的interval时间
             delayToNextHeartbeat = heartbeatIntervalMs;
 
-        // 已经超出了计划心跳时间
+        // 已经超出了计划心跳时间，需要立即心跳
         if (timeSinceLastHeartbeat > delayToNextHeartbeat)
             return 0;
         else

@@ -110,7 +110,6 @@ public class BufferPool {
         this.lock.lock();
         try {
             // check if we have a free buffer of the right size pooled
-            // 第一次不走，队列为空
             // 如果申请的是一个标准的ByteBuffer，并且free队列里面有缓存的，直接取出并返回
             if (size == poolableSize && !this.free.isEmpty())
                 return this.free.pollFirst();
@@ -123,7 +122,7 @@ public class BufferPool {
             if (this.nonPooledAvailableMemory + freeListSize >= size) {
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request, but need to allocate the buffer
-                // 第一次不走，队列为空
+                // 确保现有的空间足够分配
                 freeUp(size);
                 // 并没有影响nonPooledAvailableMemory的语义
                 this.nonPooledAvailableMemory -= size;
@@ -170,7 +169,7 @@ public class BufferPool {
 
                         // 分两种情况，
                         // 1. size=batch.size, 从free里获取，结束
-                        // 2. size
+                        // 2. size > 或 < batch.size 都会判断下一次循环条件，来确定是否退出
                         // check if we can satisfy this request from the free list,
                         // otherwise allocate memory
                         if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {
@@ -184,8 +183,11 @@ public class BufferPool {
                             // part of what we need on this iteration
                             // 确保有足够的内存
                             freeUp(size - accumulated);
+                            // accumulated=0，要分配的size为100，现有的nonPooledAvailableMemory只有80
+                            // 就只能先分配80，然后在下一轮循环里等待
                             int got = (int) Math.min(size - accumulated, this.nonPooledAvailableMemory);
                             this.nonPooledAvailableMemory -= got;
+                            //
                             accumulated += got;
                         }
                     }
@@ -209,11 +211,12 @@ public class BufferPool {
                     this.waiters.peekFirst().signal();
             } finally {
                 // Another finally... otherwise find bugs complains
+                // 释放锁
                 lock.unlock();
             }
         }
 
-        // 这是对应this.nonPooledAvailableMemory + freeListSize >= size的情况
+        // 分配并返回
         if (buffer == null)
             return safeAllocateByteBuffer(size);
         else
@@ -252,13 +255,13 @@ public class BufferPool {
     /**
      * Attempt to ensure we have at least the requested number of bytes of memory for allocation by deallocating pooled
      * buffers (if needed)
+     * 这是在确保现有的空间足够分配
      */
     private void freeUp(int size) {
-        // 有空闲的缓冲区，而nonPooledAvailableMemory < size
-
-        // 如果nonPooledAvailableMemory<size, 就看看队列里有没有可使用的缓冲区，有就一直
+        // 如果nonPooledAvailableMemory < size，就看free队列是不是空的，
+        // 如果不是空的，就free里的size加到nonPooledAvailableMemory > size为止
         while (this.nonPooledAvailableMemory < size && !this.free.isEmpty())
-            this.nonPooledAvailableMemory += this.free.pollLast().capacity();
+            this.nonPooledAvailableMemory += this.free.pollLast().capacity(); // poolLast取出并删除
     }
 
     /**

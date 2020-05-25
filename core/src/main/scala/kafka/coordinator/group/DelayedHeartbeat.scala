@@ -30,7 +30,10 @@ private[group] class DelayedHeartbeat(coordinator: GroupCoordinator,
                                       sessionTimeout: Long)
   extends DelayedOperation(sessionTimeout, Some(group.lock)) {
 
+
   override def tryComplete(): Boolean = coordinator.tryCompleteHeartbeat(group, member, heartbeatDeadline, forceComplete _)
+  // 过期处理，移出消费者组
   override def onExpiration() = coordinator.onExpireHeartbeat(group, member, heartbeatDeadline)
+  // 空实现
   override def onComplete() = coordinator.onCompleteHeartbeat()
 }

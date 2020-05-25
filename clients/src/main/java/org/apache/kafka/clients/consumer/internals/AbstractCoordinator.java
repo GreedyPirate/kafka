@@ -993,10 +993,12 @@ public abstract class AbstractCoordinator implements Closeable {
         private boolean closed = false;
         private AtomicReference<RuntimeException> failed = new AtomicReference<>(null);
 
+        // 设置线程名
         private HeartbeatThread() {
             super(HEARTBEAT_THREAD_PREFIX + (groupId.isEmpty() ? "" : " | " + groupId), true);
         }
 
+        // 入组之后
         public void enable() {
             synchronized (AbstractCoordinator.this) {
                 log.debug("Enabling heartbeat thread");
@@ -1006,6 +1008,7 @@ public abstract class AbstractCoordinator implements Closeable {
             }
         }
 
+        // 入组之前
         public void disable() {
             synchronized (AbstractCoordinator.this) {
                 log.debug("Disabling heartbeat thread");
@@ -1013,6 +1016,7 @@ public abstract class AbstractCoordinator implements Closeable {
             }
         }
 
+        // 关闭Consumer时
         public void close() {
             synchronized (AbstractCoordinator.this) {
                 this.closed = true;
@@ -1034,16 +1038,19 @@ public abstract class AbstractCoordinator implements Closeable {
                 log.debug("Heartbeat thread started");
                 while (true) {
                     synchronized (AbstractCoordinator.this) {
+                        // 已关闭Consumer
                         if (closed)
                             return;
 
+                        // 离开了消费者组，或者被coordinator踢出了消费者组
+                        // 设置enabled=false
                         if (!enabled) {
+                            // 看notify
                             AbstractCoordinator.this.wait();
                             continue;
                         }
 
-                        // 离开了消费者组，或者被coordinator踢出了消费者组
-                        // 设置enabled=false
+                        // 消费者组未到stable状态
                         if (state != MemberState.STABLE) {
                             // the group is not stable (perhaps because we left the group or because the coordinator
                             // kicked us out), so disable heartbeats and wait for the main thread to rejoin.
@@ -1058,27 +1065,32 @@ public abstract class AbstractCoordinator implements Closeable {
                             if (findCoordinatorFuture != null || lookupCoordinator().failed())
                                 // the immediate future check ensures that we backoff properly in the case that no
                                 // brokers are available to connect to.
+                                // 重试
                                 AbstractCoordinator.this.wait(retryBackoffMs);
                         } else if (heartbeat.sessionTimeoutExpired(now)) {
                             // the session timeout has expired without seeing a successful heartbeat, so we should
                             // probably make sure the coordinator is still healthy.
+                            // 标记Coordinator未知，也在告诉了其他操作
                             markCoordinatorUnknown();
                         } else if (heartbeat.pollTimeoutExpired(now)) {
-                            //
+                            // 两次poll间隔超过了maxPollIntervalMs
                             // the poll timeout has expired, which means that the foreground thread has stalled
                             // in between calls to poll(), so we explicitly leave the group.
                             maybeLeaveGroup();
                         } else if (!heartbeat.shouldHeartbeat(now)) {
+                            // timeToNextHeartbeat返回的时间还没到
                             // poll again after waiting for the retry backoff in case the heartbeat failed or the
                             // coordinator disconnected
                             AbstractCoordinator.this.wait(retryBackoffMs);
                         } else {
+                            // 记录心跳发送时间
                             heartbeat.sentHeartbeat(now);
-
+                            // 发送心跳
                             sendHeartbeatRequest().addListener(new RequestFutureListener<Void>() {
                                 @Override
                                 public void onSuccess(Void value) {
                                     synchronized (AbstractCoordinator.this) {
+                                        // 记录心跳接收时间
                                         heartbeat.receiveHeartbeat(time.milliseconds());
                                     }
                                 }
@@ -1091,10 +1103,11 @@ public abstract class AbstractCoordinator implements Closeable {
                                             // ensures that the coordinator keeps the member in the group for as long
                                             // as the duration of the rebalance timeout. If we stop sending heartbeats,
                                             // however, then the session timeout may expire before we can rejoin.
+                                            // 在rebalance期间的心跳也算
                                             heartbeat.receiveHeartbeat(time.milliseconds());
                                         } else {
                                             heartbeat.failHeartbeat();
-
+                                            // 唤醒，找wait
                                             // wake up the thread if it's sleeping to reschedule the heartbeat
                                             AbstractCoordinator.this.notify();
                                         }
