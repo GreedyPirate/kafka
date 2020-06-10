@@ -560,7 +560,7 @@ class GroupMetadataManager(brokerId: Int,
 
           memRecords.batches.asScala.foreach { batch =>
             val isTxnOffsetCommit = batch.isTransactional
-            if (batch.isControlBatch) { //
+            if (batch.isControlBatch) { // 事务消息
               val recordIterator = batch.iterator
               if (recordIterator.hasNext) {
                 val record = recordIterator.next()

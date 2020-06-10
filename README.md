@@ -210,3 +210,13 @@ Apache Kafka is interested in building the community; we would welcome any thoug
 
 To contribute follow the instructions here:
  * http://kafka.apache.org/contributing.html
+
+### 源码包打包方法
+
+cd kafka
+
+./gradlew clean releaseTarGz
+
+cd kafka/core/build/distributions
+
+编译后的包文件kafka_2.11-0.xx.x.x.tgz

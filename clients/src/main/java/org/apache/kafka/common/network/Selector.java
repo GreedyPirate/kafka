@@ -102,9 +102,12 @@ public class Selector implements Selectable, AutoCloseable {
     private final Logger log;
     private final java.nio.channels.Selector nioSelector;
     private final Map<String, KafkaChannel> channels;
+    // 显式关闭的channel
     private final Set<KafkaChannel> explicitlyMutedChannels;
     private boolean outOfMemory;
+    // 发送的请求
     private final List<Send> completedSends;
+    // 接收的响应
     private final List<NetworkReceive> completedReceives;
     private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives;
     private final Set<SelectionKey> immediatelyConnectedKeys;
