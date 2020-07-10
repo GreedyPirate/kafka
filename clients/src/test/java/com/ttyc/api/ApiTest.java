@@ -37,6 +37,11 @@ public class ApiTest {
         elapsedTime += metadataEnd - metadataStart;
 
         System.out.println("elapsedTime = " + elapsedTime);
+
+        System.out.println(1 == 1<<0);
+
+        System.out.println(0B1001 & ~0001);
     }
+
 
 }

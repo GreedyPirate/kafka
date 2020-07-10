@@ -26,11 +26,13 @@ public interface Send {
 
     /**
      * The id for the destination of this send
+     * 获取目标node的id
      */
     String destination();
 
     /**
      * Is this send complete?
+     * 是否完成
      */
     boolean completed();
 

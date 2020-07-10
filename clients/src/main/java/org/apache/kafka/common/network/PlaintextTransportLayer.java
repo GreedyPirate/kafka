@@ -30,6 +30,9 @@ import java.security.Principal;
 
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 
+/**
+ *
+ */
 public class PlaintextTransportLayer implements TransportLayer {
     private final SelectionKey key;
     private final SocketChannel socketChannel;
@@ -45,6 +48,11 @@ public class PlaintextTransportLayer implements TransportLayer {
         return true;
     }
 
+    /**
+     * 确认通道连接已建立，保证后续读写不会异常
+     * @return
+     * @throws IOException
+     */
     @Override
     public boolean finishConnect() throws IOException {
         boolean connected = socketChannel.finishConnect();
@@ -189,6 +197,7 @@ public class PlaintextTransportLayer implements TransportLayer {
      */
     @Override
     public void addInterestOps(int ops) {
+        // SelectionKey ops分别左移了0，2，3，4位，与运输即为添加
         key.interestOps(key.interestOps() | ops);
 
     }

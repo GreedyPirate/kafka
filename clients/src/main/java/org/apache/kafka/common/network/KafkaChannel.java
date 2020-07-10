@@ -137,6 +137,7 @@ public class KafkaChannel {
 
     public void disconnect() {
         disconnected = true;
+        // SelectionKey.cancel(), 本质是selector移除了对channel的轮询
         transportLayer.disconnect();
     }
 
@@ -280,6 +281,7 @@ public class KafkaChannel {
     }
 
     public void setSend(Send send) {
+        // 之前的请求尚未发送完毕
         if (this.send != null)
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress, connection id is " + id);
         this.send = send;

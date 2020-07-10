@@ -63,6 +63,9 @@ public abstract class BufferSupplier implements AutoCloseable {
      */
     public abstract void close();
 
+    /**
+     * 以buffer大小为key，对应的Buffer集合为队列
+     */
     private static class DefaultSupplier extends BufferSupplier {
         // We currently use a single block size, so optimise for that case
         private final Map<Integer, Deque<ByteBuffer>> bufferMap = new HashMap<>(1);
@@ -90,6 +93,7 @@ public abstract class BufferSupplier implements AutoCloseable {
 
         @Override
         public void close() {
+            // 需要等待gc回收buffer
             bufferMap.clear();
         }
     }
