@@ -110,8 +110,9 @@ public class Selector implements Selectable, AutoCloseable {
     private boolean outOfMemory;
     // 已发送的请求
     private final List<Send> completedSends;
-    // 已处理完成的响应
+    // 已接收完成完成的响应
     private final List<NetworkReceive> completedReceives;
+    // 没有返回给用户线程的响应
     private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives;
     private final Set<SelectionKey> immediatelyConnectedKeys;
     private final Map<String, KafkaChannel> closingChannels;

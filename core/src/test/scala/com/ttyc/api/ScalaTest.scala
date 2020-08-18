@@ -158,6 +158,17 @@ class ScalaTest {
     println(s"num is : $number")
   }
   def sequenceNumber(path: String) = path.substring(path.lastIndexOf(SequenceNumberPrefix) + SequenceNumberPrefix.length)
+
+  @Test
+  def testStrMap: Unit = {
+    val str = "k1:v1,k2:v2,k3:v3"
+    val tuples = str.split(",").map(t => {
+      val kv = t.split(":")
+      (kv(0).trim, kv(1).trim)
+    })
+    val map = tuples.toMap
+    println(s"${map.getClass.getName}\n$map")
+  }
 }
 
 case class BrokerIdAndInitialOffset(brokerId: Int, initOffset: Long)
